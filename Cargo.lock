@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "katui"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52cef16a65c07ee8eba8ffe117b562872368924a71d8762e4c7e0f0d510a4628"
+checksum = "bf8685a4935aadfcca1c5a07b66c7dca81f0b3161fc02692819a0704dd5b0238"
 dependencies = [
  "katui-present",
  "katui-proto",
@@ -613,9 +613,9 @@ dependencies = [
 
 [[package]]
 name = "katui-present"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef25ca8f3bfa14d1ad592bbc57eafaa83474e21d49b30a5117a0459b8a1467b3"
+checksum = "8983d01a87797c39237c14330a8168692d6654b6f59d5ec304c6cc0a63790b0c"
 dependencies = [
  "katui-proto",
  "katui-scene",
@@ -623,9 +623,9 @@ dependencies = [
 
 [[package]]
 name = "katui-proto"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12606ca627f726c9e09af5faa8791fae409d38a2ed0a468ada91ec9bee9d5db7"
+checksum = "6a7b52f3448ae3a9b7555a098717cfbc3c3e0e7872dc2f9746eff113d5f0568b"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -633,9 +633,9 @@ dependencies = [
 
 [[package]]
 name = "katui-rt"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "922c5a2e6579b034483134144760430b5b7f0047f7a56f69dc480ed1b5b609e2"
+checksum = "a0366021b27c774c668cea377bce645ede0d9d6dcd079981c7e504236ba05e5a"
 dependencies = [
  "katui-present",
  "katui-proto",
@@ -647,9 +647,9 @@ dependencies = [
 
 [[package]]
 name = "katui-scene"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6cc27a4e5a75982885ddc5b2613591e95a51694687cc244c5a8fb638cd1c8db"
+checksum = "11fc47bb84ec8d5858d55745f2d9557347746dd1f90da8ddbbb7a99a581f3b45"
 dependencies = [
  "unicode-segmentation",
  "unicode-width",
