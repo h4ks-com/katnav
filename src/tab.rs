@@ -1,158 +1,158 @@
-//! One page on the terminal: its frames out through katui, the
-//! terminal's keys, mouse and paste in through the DevTools input domain.
+//! One page on the terminal: CEF's frames out through katui, the
+//! terminal's keys, mouse and paste in through CEF's input calls.
 
-#![allow(
-    clippy::indexing_slicing,
-    reason = "we only index serde_json objects we built, which never panics"
-)]
-
+use std::cell::RefCell;
 use std::io;
-use std::sync::{Arc, OnceLock};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use katui::present::session;
 use katui::present::surface::{PatchedKitty, PixelScreen};
-use katui::proto::input::{Button, InputEvent, Key, MouseAction, MouseEvent, Pointer};
+use katui::proto::input::{Button, InputEvent, Key, Mods, MouseAction, MouseEvent, Pointer};
 use katui::proto::probe::{Capabilities, CellPixels};
 use katui::rt::app::{App, AppEvent, Control};
 use katui::rt::events::Waker;
 use katui::scene::CellSize;
 use katui::scene::surface::Surface;
-use serde_json::json;
 
-use crate::chrome::Browser;
-use crate::keys::{dom_key, key_event, modifiers};
+use crate::Error;
+use crate::engine::{self, Engine, KeyKind, Page, View};
+use crate::governor::Governor;
+use crate::keys;
 
 const BASE_IMAGE: u32 = 900;
 const TILE_BUDGET: usize = 320;
-/// How far one wheel notch scrolls, in CSS pixels.
-const WHEEL_STEP: f64 = 80.0;
+pub(crate) const FRAMES_PER_SECOND: u32 = 60;
+/// How often we run CEF's message loop.
+const PUMP_EVERY: Duration = Duration::from_millis(2);
+/// How far one wheel notch scrolls.
+const WHEEL_STEP: i32 = 100;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-/// How many times fewer pixels each way we ask for under a multiplexer,
-/// which carries graphics far more slowly than a terminal does.
-const MULTIPLEXED_SHRINK: u32 = 2;
+/// How long we wait for the page to close before we leave anyway.
+const CLOSE_WAIT: Duration = Duration::from_secs(1);
+const IS_REPEAT: u32 = 1 << 13;
 
-/// What the protocol thread sends the loop.
+/// What the pump thread sends the loop.
 #[derive(Debug)]
 pub(crate) enum Message {
-    Frame(Arc<Surface>),
-    Navigated(String),
-    Gone(String),
+    /// Time to run CEF's message loop.
+    Pump,
 }
 
-/// The page's viewport in CSS pixels and how many device pixels each one takes.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Viewport {
-    width: u32,
-    height: u32,
-    scale: f64,
+/// How a tab renders.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Options {
+    /// Render at a lower resolution, for games.
+    pub(crate) game: bool,
 }
 
-/// The CSS viewport for a terminal of `size` cells of `cell` pixels.
-/// High density cells get two device pixels per CSS pixel, so pages lay
-/// out at the size a desktop window of the same physical size would.
-fn viewport(size: CellSize, cell: CellPixels, multiplexed: bool) -> Viewport {
-    let device_width = u32::from(size.columns) * u32::from(cell.width);
-    let device_height = u32::from(size.rows) * u32::from(cell.height);
-    let density = if cell.height >= 30 { 2 } else { 1 };
-    let shrink = if multiplexed { MULTIPLEXED_SHRINK } else { 1 };
-    Viewport {
-        width: device_width / density,
-        height: device_height / density,
-        scale: f64::from(density) / f64::from(shrink),
+/// The render scale range: games start low, pages start sharp.
+fn scale_range(options: Options, multiplexed: bool) -> (f64, f64) {
+    let (min, max) = if options.game {
+        (0.25, 0.5)
+    } else {
+        (0.5, 1.0)
+    };
+    if multiplexed {
+        (min / 2.0, max / 2.0)
+    } else {
+        (min, max)
     }
 }
 
+/// CSS pixels for a terminal of `size` cells of `cell` device pixels:
+/// cells 30 pixels tall or more are a high density screen.
+fn layout(size: CellSize, cell: CellPixels) -> (i32, i32, f64) {
+    let density = if cell.height >= 30 { 2 } else { 1 };
+    let width = u32::from(size.columns) * u32::from(cell.width) / density;
+    let height = u32::from(size.rows) * u32::from(cell.height) / density;
+    let as_int = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+    (as_int(width), as_int(height), f64::from(density))
+}
+
 pub(crate) struct Tab {
-    browser: Browser,
-    waker: Arc<OnceLock<Waker<Message>>>,
+    page: Option<Page>,
+    engine: Engine,
+    view: Rc<RefCell<View>>,
+    url: String,
     caps: Capabilities,
     cell: CellPixels,
-    url: String,
+    density: f64,
     screen: PixelScreen,
     fitted: Option<CellSize>,
-    view: Viewport,
-    frame: Option<Arc<Surface>>,
+    frame: Option<Surface>,
     pointer: Pointer,
-    last_press: Option<(Instant, Button, u32)>,
+    last_press: Option<(Instant, Button, i32)>,
     held_buttons: u32,
     releases_seen: bool,
     held_keys: Vec<Key>,
-    started: bool,
+    governor: Governor,
+    drawn_at: Option<Instant>,
+    pump_pending: Arc<AtomicBool>,
     title_shown: bool,
-    ended: Option<String>,
+    closing: Option<Instant>,
 }
 
 impl Tab {
-    /// A tab on `browser` that opens `url`; `waker` is where the protocol
-    /// thread finds the loop once it runs.
-    pub(crate) fn new(
-        browser: Browser,
-        caps: Capabilities,
-        url: String,
-        waker: Arc<OnceLock<Waker<Message>>>,
-    ) -> Self {
+    pub(crate) fn new(engine: Engine, caps: Capabilities, url: String, options: Options) -> Self {
         let cell = katui::rt::tty::cell_size(&caps);
+        let (min, max) = scale_range(options, caps.multiplexed());
         Self {
-            browser,
-            waker,
+            page: None,
+            engine,
+            view: Rc::new(RefCell::new(View::default())),
+            url,
             pointer: Pointer::new(caps.cell, cell),
             caps,
             cell,
-            url,
+            density: 1.0,
             screen: PixelScreen::default(),
             fitted: None,
-            view: Viewport {
-                width: 0,
-                height: 0,
-                scale: 1.0,
-            },
             frame: None,
             last_press: None,
             held_buttons: 0,
             releases_seen: false,
             held_keys: Vec::new(),
-            started: false,
+            governor: Governor::new(Duration::from_secs(1) / FRAMES_PER_SECOND, min, max),
+            drawn_at: None,
+            pump_pending: Arc::new(AtomicBool::new(false)),
             title_shown: false,
-            ended: None,
+            closing: None,
         }
     }
 
-    /// Why the browser went away, once it has.
-    pub(crate) fn ended(&self) -> Option<&str> {
-        self.ended.as_deref()
+    /// Whether the page closed, which CEF needs before it can shut down.
+    pub(crate) fn closed(&self) -> bool {
+        self.view.borrow().closed
     }
 
-    /// Size the page to the terminal and restart the screencast at the
-    /// new size, since the screencast caps its frames at what we asked for.
-    fn fit(&mut self, out: &mut Vec<u8>, size: CellSize) -> io::Result<()> {
+    fn set_scale(&self) {
+        self.view.borrow_mut().scale = (self.density * self.governor.scale()) as f32;
+    }
+
+    /// Size the page to the terminal, opening it the first time.
+    fn fit(&mut self, out: &mut Vec<u8>, size: CellSize) -> Result<(), Error> {
         if self.fitted == Some(size) {
             return Ok(());
         }
         self.cell = katui::rt::tty::cell_size(&self.caps);
         self.pointer.resize(size.columns, size.rows);
-        self.view = viewport(size, self.cell, self.caps.multiplexed());
-        let frame_width = (f64::from(self.view.width) * self.view.scale).round();
-        let frame_height = (f64::from(self.view.height) * self.view.scale).round();
-        self.browser.send(
-            "Emulation.setDeviceMetricsOverride",
-            json!({
-                "width": self.view.width,
-                "height": self.view.height,
-                "deviceScaleFactor": self.view.scale,
-                "mobile": false,
-            }),
-        );
-        self.browser.send("Page.stopScreencast", json!({}));
-        self.browser.send(
-            "Page.startScreencast",
-            json!({
-                "format": "jpeg",
-                "quality": 85,
-                "maxWidth": frame_width,
-                "maxHeight": frame_height,
-            }),
-        );
+        let (width, height, density) = layout(size, self.cell);
+        self.density = density;
+        {
+            let mut view = self.view.borrow_mut();
+            view.width = width;
+            view.height = height;
+        }
+        self.set_scale();
+        if self.page.is_none() {
+            self.page = Some(self.engine.open(&self.url, &self.view)?);
+        }
+        if let Some(page) = &self.page {
+            page.resized();
+        }
         self.screen.free(out)?;
         self.screen = PixelScreen::new(
             &self.caps,
@@ -168,29 +168,55 @@ impl Tab {
         Ok(())
     }
 
-    fn open(&mut self) {
-        self.started = true;
-        self.browser.send("Page.enable", json!({}));
-        self.browser
-            .send("Page.navigate", json!({ "url": self.url }));
+    /// Run CEF and collect what it reported.
+    fn pump(&mut self) -> Control {
+        self.engine.pump();
+        // katui drains every queued message before it draws, so we let the
+        // next pump be queued only once this one is done
+        self.pump_pending.store(false, Ordering::Relaxed);
+        let mut view = self.view.borrow_mut();
+        if view.closed || self.closing.is_some_and(|at| at.elapsed() > CLOSE_WAIT) {
+            return Control::Quit;
+        }
+        let mut control = Control::Wait;
+        if let Some(address) = view.address.take() {
+            self.url = address;
+            self.title_shown = false;
+            control = Control::Redraw;
+        }
+        if let Some(frame) = view.frame.take() {
+            self.frame = Some(frame);
+            control = Control::Redraw;
+        }
+        control
+    }
+
+    /// The terminal took the frame we drew last; let the governor judge
+    /// how long encoding and delivering it took.
+    fn delivered(&mut self) {
+        let Some(at) = self.drawn_at.take() else {
+            return;
+        };
+        if self
+            .governor
+            .delivered(at.elapsed(), Instant::now())
+            .is_some()
+        {
+            self.set_scale();
+            if let Some(page) = &self.page {
+                page.resized();
+            }
+        }
     }
 
     /// The CSS pixel under `mouse`.
-    fn css_point(&mut self, mouse: &MouseEvent) -> (f64, f64) {
+    fn css_point(&mut self, mouse: &MouseEvent) -> (i32, i32) {
         let (x, y) = self.pointer.locate(mouse, self.cell);
-        let fitted = self.fitted.unwrap_or(CellSize {
-            columns: 1,
-            rows: 1,
-        });
-        let across = f64::from(fitted.columns) * f64::from(self.cell.width);
-        let down = f64::from(fitted.rows) * f64::from(self.cell.height);
-        (
-            f64::from(x) * f64::from(self.view.width) / across.max(1.0),
-            f64::from(y) * f64::from(self.view.height) / down.max(1.0),
-        )
+        let ratio = 1.0 / self.density;
+        ((f64::from(x) * ratio) as i32, (f64::from(y) * ratio) as i32)
     }
 
-    fn click_count(&mut self, button: Button) -> u32 {
+    fn click_count(&mut self, button: Button) -> i32 {
         let now = Instant::now();
         let count = match self.last_press {
             Some((at, last, count)) if last == button && now - at < DOUBLE_CLICK => count + 1,
@@ -201,90 +227,90 @@ impl Tab {
     }
 
     fn mouse(&mut self, mouse: &MouseEvent) {
-        let (x, y) = self.css_point(mouse);
-        let mut event = json!({
-            "x": x,
-            "y": y,
-            "modifiers": modifiers(mouse.mods),
-        });
-        match mouse.action {
-            MouseAction::Press(button) => {
-                self.held_buttons |= button_bit(button);
-                event["type"] = json!("mousePressed");
-                event["button"] = json!(button.name());
-                event["clickCount"] = json!(self.click_count(button));
-            }
-            MouseAction::Release(button) => {
-                self.held_buttons &= !button_bit(button);
-                event["type"] = json!("mouseReleased");
-                event["button"] = json!(button.name());
-                event["clickCount"] = json!(self.last_press.map_or(1, |(_, _, count)| count));
-            }
-            MouseAction::Drag(button) => {
-                event["type"] = json!("mouseMoved");
-                event["button"] = json!(button.name());
-            }
-            MouseAction::Move => event["type"] = json!("mouseMoved"),
-            MouseAction::WheelUp | MouseAction::WheelDown => {
-                let sign = if mouse.action == MouseAction::WheelUp {
-                    -1.0
-                } else {
-                    1.0
-                };
-                event["type"] = json!("mouseWheel");
-                event["deltaX"] = json!(0);
-                event["deltaY"] = json!(sign * WHEEL_STEP);
-            }
+        let at = self.css_point(mouse);
+        if let MouseAction::Press(button) = mouse.action {
+            self.held_buttons |= button_flag(button);
         }
-        event["buttons"] = json!(self.held_buttons);
-        self.browser.send("Input.dispatchMouseEvent", event);
+        let count = match mouse.action {
+            MouseAction::Press(button) => self.click_count(button),
+            _ => self.last_press.map_or(1, |(_, _, count)| count),
+        };
+        let flags = keys::flags(mouse.mods, false) | self.held_buttons;
+        if let MouseAction::Release(button) = mouse.action {
+            self.held_buttons &= !button_flag(button);
+        }
+        let Some(page) = &self.page else { return };
+        match mouse.action {
+            MouseAction::Press(button) => page.click(at, flags, button, false, count),
+            MouseAction::Release(button) => page.click(at, flags, button, true, count),
+            MouseAction::Drag(_) | MouseAction::Move => page.hover(at, flags),
+            MouseAction::WheelUp => page.wheel(at, flags, WHEEL_STEP),
+            MouseAction::WheelDown => page.wheel(at, flags, -WHEEL_STEP),
+        }
     }
 
     /// A key going down. Until the terminal has shown it reports releases
     /// we release every key right after its press, so no key sticks.
-    fn key_down(&mut self, key: Key, mods: katui::proto::input::Mods) {
-        let Some(dom) = dom_key(key) else { return };
+    fn key_down(&mut self, key: Key, mods: Mods) {
+        let (Some(page), Some(press)) = (&self.page, keys::press(key)) else {
+            return;
+        };
         let repeat = self.held_keys.contains(&key);
-        self.browser.send(
-            "Input.dispatchKeyEvent",
-            key_event(&dom, mods, true, repeat),
-        );
-        if self.releases_seen {
-            if !repeat {
-                self.held_keys.push(key);
-            }
-        } else {
-            self.browser.send(
-                "Input.dispatchKeyEvent",
-                key_event(&dom, mods, false, false),
-            );
+        let flags = keys::flags(mods, press.shifted) | if repeat { IS_REPEAT } else { 0 };
+        let character = press.text.map_or(0, char_code);
+        let event = |kind, windows| engine::Key {
+            kind,
+            windows,
+            native: press.physical.native(),
+            character,
+            flags,
+        };
+        page.key(&event(KeyKind::Down, press.physical.windows));
+        if let Some(text) = press.text.filter(|_| !mods.ctrl && !mods.alt) {
+            page.key(&event(KeyKind::Char, i32::from(char_code(text))));
+        }
+        if !self.releases_seen {
+            page.key(&event(KeyKind::Up, press.physical.windows));
+        } else if !repeat {
+            self.held_keys.push(key);
         }
     }
 
-    fn key_up(&mut self, key: Key, mods: katui::proto::input::Mods) {
+    fn key_up(&mut self, key: Key, mods: Mods) {
         self.releases_seen = true;
         self.held_keys.retain(|held| *held != key);
-        if let Some(dom) = dom_key(key) {
-            self.browser.send(
-                "Input.dispatchKeyEvent",
-                key_event(&dom, mods, false, false),
-            );
-        }
+        let (Some(page), Some(press)) = (&self.page, keys::press(key)) else {
+            return;
+        };
+        page.key(&engine::Key {
+            kind: KeyKind::Up,
+            windows: press.physical.windows,
+            native: press.physical.native(),
+            character: press.text.map_or(0, char_code),
+            flags: keys::flags(mods, press.shifted),
+        });
     }
 
     fn input(&mut self, event: &InputEvent) -> Control {
         match event {
-            InputEvent::Key(Key::Char('q'), mods) if mods.ctrl => return Control::Quit,
+            InputEvent::Key(Key::Char('q'), mods) if mods.ctrl => {
+                if let Some(page) = &self.page {
+                    page.close();
+                }
+                self.closing = Some(Instant::now());
+            }
             InputEvent::Key(key, mods) => self.key_down(*key, *mods),
             InputEvent::KeyUp(key, mods) => self.key_up(*key, *mods),
             InputEvent::Mouse(mouse) => self.mouse(mouse),
-            InputEvent::Paste(text) => self
-                .browser
-                .send("Input.insertText", json!({ "text": text })),
+            InputEvent::Paste(text) => {
+                if let Some(page) = &self.page {
+                    page.insert(text);
+                }
+            }
             InputEvent::Mode(..) => self.pointer.observe(event),
             InputEvent::Focus(false) => {
                 for key in std::mem::take(&mut self.held_keys) {
-                    self.key_up(key, katui::proto::input::Mods::NONE);
+                    self.key_up(key, Mods::NONE);
                 }
             }
             _ => {}
@@ -293,11 +319,17 @@ impl Tab {
     }
 }
 
-fn button_bit(button: Button) -> u32 {
+/// The UTF-16 unit CEF takes for `c`; characters outside the basic
+/// plane type nothing.
+fn char_code(c: char) -> u16 {
+    u16::try_from(u32::from(c)).unwrap_or(0)
+}
+
+fn button_flag(button: Button) -> u32 {
     match button {
-        Button::Left => 1,
-        Button::Right => 2,
-        Button::Middle => 4,
+        Button::Left => 1 << 4,
+        Button::Middle => 1 << 5,
+        Button::Right => 1 << 6,
     }
 }
 
@@ -305,25 +337,22 @@ impl App for Tab {
     type Message = Message;
 
     fn start(&mut self, waker: Waker<Message>) {
-        let _ = self.waker.set(waker);
+        let pending = Arc::clone(&self.pump_pending);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(PUMP_EVERY);
+                if !pending.swap(true, Ordering::Relaxed) && !waker.send(Message::Pump) {
+                    return;
+                }
+            }
+        });
     }
 
     fn update(&mut self, event: AppEvent<Message>) -> Control {
+        self.delivered();
         match event {
+            AppEvent::Message(Message::Pump) => self.pump(),
             AppEvent::Input(input) => self.input(&input),
-            AppEvent::Message(Message::Frame(frame)) => {
-                self.frame = Some(frame);
-                Control::Redraw
-            }
-            AppEvent::Message(Message::Navigated(url)) => {
-                self.url = url;
-                self.title_shown = false;
-                Control::Redraw
-            }
-            AppEvent::Message(Message::Gone(reason)) => {
-                self.ended = Some(reason);
-                Control::Quit
-            }
             AppEvent::Resized(_) => Control::Redraw,
             AppEvent::Repaint => {
                 self.screen.repaint();
@@ -333,20 +362,22 @@ impl App for Tab {
     }
 
     fn draw(&mut self, out: &mut Vec<u8>, size: CellSize) -> io::Result<Control> {
-        if !self.started {
+        if self.page.is_none() {
             session::report_key_releases(out)?;
         }
-        self.fit(out, size)?;
-        if !self.started {
-            self.open();
-        }
+        self.fit(out, size).map_err(io::Error::other)?;
         if !self.title_shown {
             self.title_shown = true;
             write_title(out, &self.url)?;
         }
         if let Some(frame) = &self.frame {
-            self.screen
+            let started = Instant::now();
+            let written = self
+                .screen
                 .render_frame(out, frame, size.columns, size.rows)?;
+            if written > 0 {
+                self.drawn_at = Some(started);
+            }
         }
         Ok(Control::Wait)
     }
@@ -364,7 +395,7 @@ mod tests {
     use katui::proto::probe::CellPixels;
     use katui::scene::CellSize;
 
-    use super::viewport;
+    use super::{Options, layout, scale_range};
 
     #[test]
     fn dense_cells_lay_out_at_half_the_device_pixels() {
@@ -372,35 +403,22 @@ mod tests {
             columns: 100,
             rows: 40,
         };
-        let plain = viewport(
-            size,
-            CellPixels {
-                width: 10,
-                height: 20,
-            },
-            false,
-        );
-        assert_eq!((plain.width, plain.height, plain.scale), (1000, 800, 1.0));
-        let retina = viewport(
-            size,
-            CellPixels {
-                width: 20,
-                height: 40,
-            },
-            false,
-        );
-        assert_eq!(
-            (retina.width, retina.height, retina.scale),
-            (1000, 800, 2.0)
-        );
-        let multiplexed = viewport(
-            size,
-            CellPixels {
-                width: 20,
-                height: 40,
-            },
-            true,
-        );
-        assert_eq!(multiplexed.scale, 1.0, "half the pixels each way travel");
+        let plain = CellPixels {
+            width: 10,
+            height: 20,
+        };
+        let retina = CellPixels {
+            width: 20,
+            height: 40,
+        };
+        assert_eq!(layout(size, plain), (1000, 800, 1.0));
+        assert_eq!(layout(size, retina), (1000, 800, 2.0));
+    }
+
+    #[test]
+    fn games_render_at_half_the_resolution_at_most() {
+        assert_eq!(scale_range(Options { game: true }, false), (0.25, 0.5));
+        assert_eq!(scale_range(Options { game: false }, false), (0.5, 1.0));
+        assert_eq!(scale_range(Options { game: false }, true), (0.25, 0.5));
     }
 }
