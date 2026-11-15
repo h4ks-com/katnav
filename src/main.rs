@@ -7,7 +7,7 @@ mod keys;
 mod tab;
 
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 use katui::rt::app::run_app;
@@ -29,7 +29,7 @@ pub(crate) enum Error {
     Executable(std::io::Error),
     #[cfg(target_os = "macos")]
     #[error("found no CEF beside {0}; run katnav from its bundle (just bundle)")]
-    NoCef(PathBuf),
+    NoCef(std::path::PathBuf),
     #[error("CEF did not start")]
     CefStart,
     #[error(transparent)]
