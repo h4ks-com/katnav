@@ -1,0 +1,41 @@
+[package]
+name = "katnav"
+description = "A web browser in your terminal: Chromium's pixels over the kitty graphics protocol"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+categories = ["command-line-utilities", "web-programming"]
+keywords = ["terminal", "browser", "kitty-graphics", "chromium"]
+
+[dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+katui = { git = "https://github.com/h4ks-com/katui", default-features = false }
+serde_json = "1"
+thiserror = "2"
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+unknown_lints = { level = "allow", priority = -2 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "warn"
+indexing_slicing = "warn"
+cognitive_complexity = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+cast_possible_truncation = "allow"
