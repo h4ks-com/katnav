@@ -25,8 +25,9 @@ just run example.com
 ```
 
 Scroll with the wheel, click, and type as in any browser. Press
-<kbd>Ctrl</kbd>+<kbd>Q</kbd> to quit. Add `--game` to render games at a
-lower resolution, and `--mute` to play no sound.
+<kbd>Ctrl</kbd>+<kbd>Q</kbd> to quit, and add `--mute` to play no sound. katnav
+lowers the resolution on its own when a page draws faster than the
+terminal keeps up, as games do.
 
 katnav looks best in kitty, Ghostty and WezTerm. Other terminals get sixel
 images or colored blocks.

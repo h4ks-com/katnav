@@ -42,20 +42,10 @@ pub(crate) enum Message {
     Pump,
 }
 
-/// How a tab renders.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Options {
-    /// Render at a lower resolution, for games.
-    pub(crate) game: bool,
-}
-
-/// The render scale range: games start low, pages start sharp.
-fn scale_range(options: Options, multiplexed: bool) -> (f64, f64) {
-    let (min, max) = if options.game {
-        (0.25, 0.5)
-    } else {
-        (0.5, 1.0)
-    };
+/// The render scale range the governor picks from: pages start sharp, and
+/// a game shrinks until its frames keep up.
+fn scale_range(multiplexed: bool) -> (f64, f64) {
+    let (min, max) = (0.25, 1.0);
     if multiplexed {
         (min / 2.0, max / 2.0)
     } else {
@@ -96,9 +86,9 @@ pub(crate) struct Tab {
 }
 
 impl Tab {
-    pub(crate) fn new(engine: Engine, caps: Capabilities, url: String, options: Options) -> Self {
+    pub(crate) fn new(engine: Engine, caps: Capabilities, url: String) -> Self {
         let cell = katui::rt::tty::cell_size(&caps);
-        let (min, max) = scale_range(options, caps.multiplexed());
+        let (min, max) = scale_range(caps.multiplexed());
         Self {
             page: None,
             engine,
@@ -385,7 +375,7 @@ mod tests {
     use katui::proto::probe::CellPixels;
     use katui::scene::CellSize;
 
-    use super::{Options, layout, scale_range};
+    use super::{layout, scale_range};
 
     #[test]
     fn dense_cells_lay_out_at_half_the_device_pixels() {
@@ -406,9 +396,8 @@ mod tests {
     }
 
     #[test]
-    fn games_render_at_half_the_resolution_at_most() {
-        assert_eq!(scale_range(Options { game: true }, false), (0.25, 0.5));
-        assert_eq!(scale_range(Options { game: false }, false), (0.5, 1.0));
-        assert_eq!(scale_range(Options { game: false }, true), (0.25, 0.5));
+    fn a_multiplexer_halves_the_scale_range() {
+        assert_eq!(scale_range(false), (0.25, 1.0));
+        assert_eq!(scale_range(true), (0.125, 0.5));
     }
 }

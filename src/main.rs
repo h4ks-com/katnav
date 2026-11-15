@@ -13,11 +13,10 @@ use std::process::ExitCode;
 use katui::rt::app::run_app;
 
 use crate::engine::Engine;
-use crate::tab::{FRAMES_PER_SECOND, Options, Tab};
+use crate::tab::{FRAMES_PER_SECOND, Tab};
 
-const USAGE: &str = "usage: katnav [--game] [--mute] <url or file>
+const USAGE: &str = "usage: katnav [--mute] <url or file>
 
-  --game  render at a lower resolution, for games
   --mute  play no sound
 
 ctrl-q to quit";
@@ -42,28 +41,22 @@ pub(crate) enum Error {
 #[derive(Debug, PartialEq, Eq)]
 struct Request {
     url: String,
-    game: bool,
     mute: bool,
 }
 
 /// The request in `arguments`, or `None` when they do not make one.
 fn parse(arguments: impl IntoIterator<Item = String>) -> Option<Request> {
     let mut url = None;
-    let (mut game, mut mute) = (false, false);
+    let mut mute = false;
     for argument in arguments {
         match argument.as_str() {
-            "--game" => game = true,
             "--mute" => mute = true,
             flag if flag.starts_with('-') => return None,
             _ if url.is_some() => return None,
             _ => url = Some(url_from_argument(&argument)),
         }
     }
-    Some(Request {
-        url: url?,
-        game,
-        mute,
-    })
+    Some(Request { url: url?, mute })
 }
 
 /// What the user typed as a URL: a file that exists, a URL with a
@@ -84,8 +77,7 @@ fn url_from_argument(argument: &str) -> String {
 fn browse(request: Request) -> Result<(), Error> {
     let caps = katui::rt::tty::probe_default();
     let engine = Engine::start(request.mute)?;
-    let options = Options { game: request.game };
-    let mut tab = Tab::new(engine, caps.clone(), request.url, options);
+    let mut tab = Tab::new(engine, caps.clone(), request.url);
     run_app(&mut tab, std::io::stdout(), &caps, FRAMES_PER_SECOND)?;
     if !tab.closed() {
         // CEF's shutdown waits for a page that never closed until its
@@ -147,14 +139,13 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            parse(arguments(&["--game", "example.com", "--mute"])),
+            parse(arguments(&["--mute", "example.com"])),
             Some(Request {
                 url: "https://example.com".to_owned(),
-                game: true,
                 mute: true,
             })
         );
-        assert_eq!(parse(arguments(&["--game"])), None);
+        assert_eq!(parse(arguments(&["--mute"])), None);
         assert_eq!(parse(arguments(&["a.com", "b.com"])), None);
         assert_eq!(parse(arguments(&["--help"])), None);
     }
