@@ -1,6 +1,7 @@
 [package]
 name = "katnav"
 description = "A web browser in your terminal: Chromium's pixels over the kitty graphics protocol"
+repository = "https://github.com/h4ks-com/katnav"
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.90"
@@ -11,7 +12,7 @@ keywords = ["terminal", "browser", "kitty-graphics", "chromium"]
 
 [dependencies]
 cef = { version = "=156.5.0", default-features = false }
-katui = { git = "https://github.com/h4ks-com/katui", default-features = false }
+katui = { version = "0.0.4", default-features = false }
 thiserror = "2"
 
 [lints.rust]

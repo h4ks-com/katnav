@@ -12,8 +12,9 @@ use katui::present::session;
 use katui::present::surface::{PatchedKitty, PixelScreen};
 use katui::proto::input::{Button, InputEvent, Key, Mods, MouseAction, MouseEvent, Pointer};
 use katui::proto::probe::{Capabilities, CellPixels};
-use katui::rt::app::{App, AppEvent, Control};
+use katui::rt::app::{App, AppEvent, Control, Delivery};
 use katui::rt::events::Waker;
+use katui::rt::stash::local_stash;
 use katui::scene::CellSize;
 use katui::scene::surface::Surface;
 
@@ -89,7 +90,6 @@ pub(crate) struct Tab {
     releases_seen: bool,
     held_keys: Vec<Key>,
     governor: Governor,
-    drawn_at: Option<Instant>,
     pump_pending: Arc<AtomicBool>,
     title_shown: bool,
     closing: Option<Instant>,
@@ -116,7 +116,6 @@ impl Tab {
             releases_seen: false,
             held_keys: Vec::new(),
             governor: Governor::new(Duration::from_secs(1) / FRAMES_PER_SECOND, min, max),
-            drawn_at: None,
             pump_pending: Arc::new(AtomicBool::new(false)),
             title_shown: false,
             closing: None,
@@ -154,16 +153,16 @@ impl Tab {
             page.resized();
         }
         self.screen.free(out)?;
-        self.screen = PixelScreen::new(
-            &self.caps,
+        let mut presenter = PatchedKitty::with_tiles(
+            BASE_IMAGE,
             self.cell,
-            PatchedKitty::with_tiles(
-                BASE_IMAGE,
-                self.cell,
-                u32::from(self.cell.height) * 3,
-                TILE_BUDGET,
-            ),
+            u32::from(self.cell.height) * 3,
+            TILE_BUDGET,
         );
+        if let Some(stash) = local_stash(&self.caps) {
+            presenter = presenter.with_stash(stash);
+        }
+        self.screen = PixelScreen::new(&self.caps, self.cell, presenter);
         self.fitted = Some(size);
         Ok(())
     }
@@ -171,8 +170,8 @@ impl Tab {
     /// Run CEF and collect what it reported.
     fn pump(&mut self) -> Control {
         self.engine.pump();
-        // katui drains every queued message before it draws, so we let the
-        // next pump be queued only once this one is done
+        // we queue the next pump only once this one is done, so pumps never
+        // pile up while a frame is on its way
         self.pump_pending.store(false, Ordering::Relaxed);
         let mut view = self.view.borrow_mut();
         if view.closed || self.closing.is_some_and(|at| at.elapsed() > CLOSE_WAIT) {
@@ -189,24 +188,6 @@ impl Tab {
             control = Control::Redraw;
         }
         control
-    }
-
-    /// The terminal took the frame we drew last; let the governor judge
-    /// how long encoding and delivering it took.
-    fn delivered(&mut self) {
-        let Some(at) = self.drawn_at.take() else {
-            return;
-        };
-        if self
-            .governor
-            .delivered(at.elapsed(), Instant::now())
-            .is_some()
-        {
-            self.set_scale();
-            if let Some(page) = &self.page {
-                page.resized();
-            }
-        }
     }
 
     /// The CSS pixel under `mouse`.
@@ -349,7 +330,6 @@ impl App for Tab {
     }
 
     fn update(&mut self, event: AppEvent<Message>) -> Control {
-        self.delivered();
         match event {
             AppEvent::Message(Message::Pump) => self.pump(),
             AppEvent::Input(input) => self.input(&input),
@@ -371,15 +351,25 @@ impl App for Tab {
             write_title(out, &self.url)?;
         }
         if let Some(frame) = &self.frame {
-            let started = Instant::now();
-            let written = self
-                .screen
+            self.screen
                 .render_frame(out, frame, size.columns, size.rows)?;
-            if written > 0 {
-                self.drawn_at = Some(started);
-            }
         }
         Ok(Control::Wait)
+    }
+
+    /// Let the governor judge how long the frame took to encode and reach
+    /// the terminal.
+    fn delivered(&mut self, delivery: &Delivery) {
+        if self
+            .governor
+            .delivered(delivery.delivered, Instant::now())
+            .is_some()
+        {
+            self.set_scale();
+            if let Some(page) = &self.page {
+                page.resized();
+            }
+        }
     }
 }
 
