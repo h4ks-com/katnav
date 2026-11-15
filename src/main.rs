@@ -27,6 +27,7 @@ ctrl-q to quit";
 pub(crate) enum Error {
     #[error("could not find katnav's own executable: {0}")]
     Executable(std::io::Error),
+    #[cfg(target_os = "macos")]
     #[error("found no CEF beside {0}; run katnav from its bundle (just bundle)")]
     NoCef(PathBuf),
     #[error("CEF did not start")]
