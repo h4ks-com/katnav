@@ -145,27 +145,31 @@ fn character(c: char) -> Option<Press> {
         .map(|(plain, _, physical)| press(*physical, *plain != c))
 }
 
+const NAMED: [(Key, Physical); 14] = [
+    (Key::Enter, key("Enter", 13, 0x24, 36)),
+    (Key::Tab, key("Tab", 9, 0x30, 23)),
+    (Key::Backspace, key("Backspace", 8, 0x33, 22)),
+    (Key::Delete, key("Delete", 46, 0x75, 119)),
+    (Key::Insert, key("Insert", 45, 0x72, 118)),
+    (Key::Escape, key("Escape", 27, 0x35, 9)),
+    (Key::Up, key("ArrowUp", 38, 0x7E, 111)),
+    (Key::Down, key("ArrowDown", 40, 0x7D, 116)),
+    (Key::Left, key("ArrowLeft", 37, 0x7B, 113)),
+    (Key::Right, key("ArrowRight", 39, 0x7C, 114)),
+    (Key::Home, key("Home", 36, 0x73, 110)),
+    (Key::End, key("End", 35, 0x77, 115)),
+    (Key::PageUp, key("PageUp", 33, 0x74, 112)),
+    (Key::PageDown, key("PageDown", 34, 0x79, 117)),
+];
+
 fn named(key: Key) -> Option<Physical> {
-    Some(match key {
-        Key::Enter => self::key("Enter", 13, 0x24, 36),
-        Key::Tab => self::key("Tab", 9, 0x30, 23),
-        Key::Backspace => self::key("Backspace", 8, 0x33, 22),
-        Key::Delete => self::key("Delete", 46, 0x75, 119),
-        Key::Insert => self::key("Insert", 45, 0x72, 118),
-        Key::Escape => self::key("Escape", 27, 0x35, 9),
-        Key::Up => self::key("ArrowUp", 38, 0x7E, 111),
-        Key::Down => self::key("ArrowDown", 40, 0x7D, 116),
-        Key::Left => self::key("ArrowLeft", 37, 0x7B, 113),
-        Key::Right => self::key("ArrowRight", 39, 0x7C, 114),
-        Key::Home => self::key("Home", 36, 0x73, 110),
-        Key::End => self::key("End", 35, 0x77, 115),
-        Key::PageUp => self::key("PageUp", 33, 0x74, 112),
-        Key::PageDown => self::key("PageDown", 34, 0x79, 117),
-        Key::Function(number) => {
-            return FUNCTIONS.get(usize::from(number).checked_sub(1)?).copied();
-        }
-        Key::Char(_) => return None,
-    })
+    if let Key::Function(number) = key {
+        return FUNCTIONS.get(usize::from(number).checked_sub(1)?).copied();
+    }
+    NAMED
+        .iter()
+        .find(|(named, _)| *named == key)
+        .map(|(_, physical)| *physical)
 }
 
 /// The physical key and text behind `key`, or `None` for a key a US

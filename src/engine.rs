@@ -147,6 +147,7 @@ wrap_life_span_handler! {
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut c_int>,
         ) -> c_int {
+            // #lizard forgives: CEF's trait fixes this signature
             if let Some(frame) = browser.and_then(|browser| browser.main_frame()) {
                 frame.load_url(target_url);
             }

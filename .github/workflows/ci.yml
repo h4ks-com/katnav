@@ -1,0 +1,46 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CEF_PATH: ${{ github.workspace }}/../cef
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: astral-sh/setup-uv@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-deny,typos-cli
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CEF_PATH }}
+          key: cef-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
+      - run: just ci

@@ -14,7 +14,32 @@ cef:
     set -euo pipefail
     if [ -d "$CEF_PATH" ]; then echo "CEF is in $CEF_PATH"; exit 0; fi
     cargo install --locked --quiet export-cef-dir@{{cef_version}}
-    export-cef-dir --force "$CEF_PATH"
+    case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) platform=macosarm64 ;;
+    Darwin-x86_64) platform=macosx64 ;;
+    Linux-x86_64) platform=linux64 ;;
+    Linux-aarch64) platform=linuxarm64 ;;
+    *) echo "no CEF build for $(uname -sm)" >&2; exit 1 ;;
+    esac
+    # the CEF index outgrew export-cef-dir's download limit, so we fetch
+    # the archive ourselves and hand it over
+    chromium=$(sed -n 's/^version = "{{cef_version}}+\(.*\)"/\1/p' Cargo.lock | head -n 1)
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    curl -fsSL https://cef-builds.spotifycdn.com/index.json -o "$work/index.json"
+    read -r name sha1 < <(python3 - "$work/index.json" "$platform" "$chromium" <<'EOF'
+    import json, sys
+    index, platform, chromium = sys.argv[1:]
+    for version in json.load(open(index))[platform]["versions"]:
+        if version["cef_version"].startswith(chromium + "+"):
+            file = next(f for f in version["files"] if f["type"] == "minimal")
+            print(file["name"], file["sha1"])
+            break
+    EOF
+    )
+    curl -fSL "https://cef-builds.spotifycdn.com/$name" -o "$work/$name"
+    echo "$sha1  $work/$name" | shasum -c -
+    export-cef-dir --force --archive "$work/$name" "$CEF_PATH"
 
 # clippy with ci's denials, after every change
 check: cef
@@ -29,8 +54,27 @@ fmt-check:
 test: cef
     cargo test
 
+# licenses, advisories and sources, from deny.toml
+deny:
+    cargo deny check
+
+typos:
+    typos
+
+# cyclomatic complexity, length and parameter count of every function
+complexity:
+    uvx --from lizard==1.26.0 lizard src -l rust -C 15 -L 100 -a 8 -w
+
+# copy-paste duplication, from .jscpd.json
+dupes:
+    npx --yes jscpd@4 src/
+
+# install the git hooks, once per clone
+hooks:
+    prek install --hook-type pre-commit --hook-type commit-msg
+
 # the gate every commit passes
-ci: fmt-check check test
+ci: fmt-check check test deny typos complexity dupes
 
 # build katnav with CEF beside it: an app bundle on macOS, a folder on Linux
 bundle: cef
