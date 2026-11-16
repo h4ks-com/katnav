@@ -12,6 +12,8 @@ keywords = ["terminal", "browser", "kitty-graphics", "chromium"]
 
 [dependencies]
 cef = { version = "=156.5.0", default-features = false }
+# cef accepts any 156 build of its sys crate, so we pin the one it was generated from
+cef-dll-sys = { version = "=156.5.0", default-features = false }
 katui = { version = "0.1.0", default-features = false, features = ["gamepad"] }
 thiserror = "2"
 

@@ -29,7 +29,9 @@ pub(crate) enum Error {
     #[error("could not find katnav's own executable: {0}")]
     Executable(std::io::Error),
     #[cfg(target_os = "macos")]
-    #[error("found no CEF beside {0}; run katnav from its bundle (just bundle)")]
+    #[error(
+        "found no CEF beside {0}; install katnav with `brew install h4ks-com/tap/katnav`, or run `just run` in a clone"
+    )]
     NoCef(std::path::PathBuf),
     #[error("CEF did not start")]
     CefStart,

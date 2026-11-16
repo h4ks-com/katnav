@@ -789,6 +789,7 @@ name = "katnav"
 version = "0.1.2"
 dependencies = [
  "cef",
+ "cef-dll-sys",
  "katui",
  "thiserror",
 ]

@@ -305,6 +305,15 @@ pub(crate) fn load(helper: bool) -> Result<Library, Error> {
     let executable = std::env::current_exe().map_err(Error::Executable)?;
     #[cfg(target_os = "macos")]
     let library = {
+        // the loader panics when the framework is missing, so we look first
+        let framework = executable
+            .parent()
+            .unwrap_or(&executable)
+            .join(if helper { "../../.." } else { "../Frameworks" })
+            .join("Chromium Embedded Framework.framework");
+        if !framework.exists() {
+            return Err(Error::NoCef(executable));
+        }
         let loader = cef::library_loader::LibraryLoader::new(&executable, helper);
         if !loader.load() {
             return Err(Error::NoCef(executable));
