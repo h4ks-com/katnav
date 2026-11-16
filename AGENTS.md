@@ -32,6 +32,9 @@ katui comes from crates.io. To work against a local katui checkout, add a
 - `just test`: unit tests
 - `just bundle`: build katnav with CEF beside it
 - `just run <url>`: bundle and open a page; `--mute` passes through
+- `just dist`: the release archive for this machine, CEF included
+- `just release patch` (or minor, major): bump, gate, commit, tag and
+  push; the release workflow builds the archives
 - Automated runs pass `--mute`, so no test plays sound on the host
 
 ## The loop

@@ -135,3 +135,54 @@ run *arguments: bundle
     Darwin) exec target/katnav.app/Contents/MacOS/katnav {{arguments}} ;;
     Linux) exec target/katnav-linux/katnav {{arguments}} ;;
     esac
+
+# the release archive for this machine, CEF included, like katnav-aarch64-apple-darwin.tar.gz
+dist: bundle
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target=$(rustc -vV | sed -n 's/^host: //p')
+    stage=$(mktemp -d)
+    trap 'rm -rf "$stage"' EXIT
+    case "$(uname)" in
+    Darwin)
+        cp -R target/katnav.app "$stage/"
+        # the dev bundle links CEF from the data directory, the archive carries it
+        rm "$stage/katnav.app/Contents/Frameworks/Chromium Embedded Framework.framework"
+        cp -R "$CEF_PATH/Chromium Embedded Framework.framework" "$stage/katnav.app/Contents/Frameworks/"
+        ;;
+    Linux) cp -R target/katnav-linux "$stage/katnav" ;;
+    esac
+    cp README.md LICENSE-MIT LICENSE-APACHE "$stage/"
+    (cd "$stage" && tar -czf - *) > "katnav-$target.tar.gz"
+    echo "katnav-$target.tar.gz"
+
+version:
+    @sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1
+
+# fail unless `tag` names the crate version, like v0.1.0
+release-check tag:
+    test {{quote(tag)}} = "v$(just version)"
+
+# bump the version, pass the gate, commit, tag and push; the release
+# workflow then builds the archives, like `just release patch` (or minor, major)
+release level:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -z "$(git status --porcelain)" || { echo "commit or stash your changes first"; exit 1; }
+    test "$(git branch --show-current)" = main || { echo "release from main"; exit 1; }
+    IFS=. read -r major minor patch <<< "$(just version)"
+    case {{quote(level)}} in
+      major) next="$((major + 1)).0.0" ;;
+      minor) next="$major.$((minor + 1)).0" ;;
+      patch) next="$major.$minor.$((patch + 1))" ;;
+      *) echo "say major, minor or patch"; exit 1 ;;
+    esac
+    current=$(just version)
+    perl -pi -e "s/^version = \"\Q$current\E\"/version = \"$next\"/" Cargo.toml
+    cargo update --workspace --quiet
+    just release-check "v$next"
+    git add -A
+    just ci
+    git commit -m "chore: release $next"
+    git tag "v$next"
+    git push origin main "v$next"

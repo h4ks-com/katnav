@@ -1,0 +1,85 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # the tag names the crate version and every gate passes on it
+  check:
+    runs-on: ubuntu-latest
+    env:
+      CEF_PATH: ${{ github.workspace }}/../cef
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: astral-sh/setup-uv@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-deny,typos-cli
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libudev-dev
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CEF_PATH }}
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml') }}
+      - run: just release-check "$TAG"
+        env:
+          TAG: ${{ github.ref_name }}
+      - run: just ci
+
+  # one archive per platform, with CEF inside
+  archives:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    env:
+      CEF_PATH: ${{ github.workspace }}/../cef
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libudev-dev
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CEF_PATH }}
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml') }}
+      - run: just dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: katnav-${{ matrix.os }}
+          path: katnav-*.tar.gz
+
+  github:
+    needs: archives
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: katnav-*
+          merge-multiple: true
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
