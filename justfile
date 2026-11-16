@@ -119,10 +119,9 @@ bundle: cef
         rm -rf "$out"
         mkdir -p "$out"
         cp target/release/katnav "$out/"
-        for file in libcef.so libEGL.so libGLESv2.so libvk_swiftshader.so vk_swiftshader_icd.json \
-            v8_context_snapshot.bin icudtl.dat chrome_100_percent.pak chrome_200_percent.pak resources.pak locales; do
-            cp -R "$CEF_PATH/$file" "$out/"
-        done
+        # the libraries differ per architecture, so we copy whichever this CEF build has
+        cp -R "$CEF_PATH"/*.so* "$CEF_PATH"/vk_swiftshader_icd.json "$CEF_PATH"/*.bin \
+            "$CEF_PATH"/*.dat "$CEF_PATH"/*.pak "$CEF_PATH"/locales "$out/"
         echo "$out/katnav"
         ;;
     esac
