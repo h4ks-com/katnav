@@ -14,11 +14,14 @@ cef:
     set -euo pipefail
     if [ -d "$CEF_PATH" ]; then echo "CEF is in $CEF_PATH"; exit 0; fi
     cargo install --locked --quiet export-cef-dir@{{cef_version}}
+    python=python3
     case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) platform=macosarm64 ;;
     Darwin-x86_64) platform=macosx64 ;;
     Linux-x86_64) platform=linux64 ;;
     Linux-aarch64) platform=linuxarm64 ;;
+    # python3 on windows can be the store's installer stub
+    MINGW*-x86_64 | MSYS*-x86_64) platform=windows64 python=python ;;
     *) echo "no CEF build for $(uname -sm)" >&2; exit 1 ;;
     esac
     # the CEF index outgrew export-cef-dir's download limit, so we fetch
@@ -27,7 +30,7 @@ cef:
     work=$(mktemp -d)
     trap 'rm -rf "$work"' EXIT
     curl -fsSL https://cef-builds.spotifycdn.com/index.json -o "$work/index.json"
-    read -r name sha1 < <(python3 - "$work/index.json" "$platform" "$chromium" <<'EOF'
+    read -r name sha1 < <("$python" - "$work/index.json" "$platform" "$chromium" <<'EOF'
     import json, sys
     index, platform, chromium = sys.argv[1:]
     for version in json.load(open(index))[platform]["versions"]:
@@ -76,7 +79,7 @@ hooks:
 # the gate every commit passes
 ci: fmt-check check test deny typos complexity dupes
 
-# build katnav with CEF beside it: an app bundle on macOS, a folder on Linux
+# build katnav with CEF beside it: an app bundle on macOS, a folder on Linux and Windows
 bundle: cef
     #!/usr/bin/env bash
     set -euo pipefail
@@ -126,6 +129,16 @@ bundle: cef
         strip --strip-unneeded "$out"/libcef.so
         echo "$out/katnav"
         ;;
+    MINGW* | MSYS*)
+        cargo build --release
+        out=target/katnav-windows
+        rm -rf "$out"
+        mkdir -p "$out"
+        cp target/release/katnav.exe "$out/"
+        cp -R "$CEF_PATH"/*.dll "$CEF_PATH"/vk_swiftshader_icd.json "$CEF_PATH"/*.bin \
+            "$CEF_PATH"/*.dat "$CEF_PATH"/*.pak "$CEF_PATH"/locales "$out/"
+        echo "$out/katnav.exe"
+        ;;
     esac
 
 # open a page from the bundle, like `just run example.com`
@@ -135,6 +148,7 @@ run *arguments: bundle
     case "$(uname)" in
     Darwin) exec target/katnav.app/Contents/MacOS/katnav {{arguments}} ;;
     Linux) exec target/katnav-linux/katnav {{arguments}} ;;
+    MINGW* | MSYS*) exec target/katnav-windows/katnav.exe {{arguments}} ;;
     esac
 
 # the release archive for this machine, CEF included, like katnav-aarch64-apple-darwin.tar.gz
@@ -152,10 +166,21 @@ dist: bundle
         cp -R "$CEF_PATH/Chromium Embedded Framework.framework" "$stage/katnav.app/Contents/Frameworks/"
         ;;
     Linux) cp -R target/katnav-linux "$stage/katnav" ;;
+    MINGW* | MSYS*) cp -R target/katnav-windows "$stage/katnav" ;;
     esac
     cp README.md LICENSE-MIT LICENSE-APACHE "$stage/"
-    (cd "$stage" && tar -czf - *) > "katnav-$target.tar.gz"
-    echo "katnav-$target.tar.gz"
+    case "$(uname)" in
+    MINGW* | MSYS*)
+        archive="katnav-$target.zip"
+        rm -f "$archive"
+        powershell -NoProfile -Command "Compress-Archive -Path '$(cygpath -w "$stage")\*' -DestinationPath '$archive'"
+        ;;
+    *)
+        archive="katnav-$target.tar.gz"
+        (cd "$stage" && tar -czf - *) > "$archive"
+        ;;
+    esac
+    echo "$archive"
 
 version:
     @sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1
