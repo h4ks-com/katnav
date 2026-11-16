@@ -6,6 +6,7 @@ mod governor;
 mod keys;
 mod pads;
 mod tab;
+mod trace;
 
 use std::io::Write as _;
 use std::path::Path;
@@ -20,7 +21,7 @@ const USAGE: &str = "usage: katnav [--mute] <url or file>
 
   --mute  play no sound
 
-ctrl-q to quit";
+ctrl-c or ctrl-q to quit";
 
 /// Everything that stops katnav from showing a page.
 #[derive(Debug, thiserror::Error)]

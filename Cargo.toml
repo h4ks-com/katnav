@@ -12,7 +12,7 @@ keywords = ["terminal", "browser", "kitty-graphics", "chromium"]
 
 [dependencies]
 cef = { version = "=156.5.0", default-features = false }
-katui = { version = "0.0.7", default-features = false, features = ["gamepad"] }
+katui = { version = "0.0.8", default-features = false, features = ["gamepad"] }
 thiserror = "2"
 
 [lints.rust]

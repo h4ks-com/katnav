@@ -34,7 +34,7 @@ katnav, and opens the page. You can pass a URL, a host name or a local
 file.
 
 Scroll with the mouse wheel, click and type as in any browser, and press
-<kbd>Ctrl</kbd>+<kbd>Q</kbd> to quit. Add `--mute` to turn sound off.
+<kbd>Ctrl</kbd>+<kbd>C</kbd> to quit. Add `--mute` to turn sound off.
 
 Game controllers work too. katnav reads them itself and hands them to the
 page, so web games that support controllers see yours.

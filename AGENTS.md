@@ -11,6 +11,8 @@ katui shows the pixels.
 - `src/tab.rs`: the katui `App`: pumps CEF, frames out, input in
 - `src/governor.rs`: the render scale governor
 - `src/keys.rs`: terminal keys as US keyboard physical keys
+- `src/pads.rs`: game controllers as the page's `navigator.getGamepads`
+- `src/trace.rs`: the timing lines `KATNAV_TRACE` asks for
 
 `just cef` downloads CEF into the data directory (`CEF_PATH` overrides
 it), and `just bundle` builds the layout CEF needs: an app bundle with

@@ -4,8 +4,8 @@
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use katui::present::session;
@@ -17,13 +17,14 @@ use katui::rt::events::Waker;
 use katui::rt::gamepad::{Pad, watch};
 use katui::rt::stash::local_stash;
 use katui::scene::CellSize;
-use katui::scene::surface::Surface;
+use katui::scene::surface::{PixelPos, Surface};
 
 use crate::Error;
 use crate::engine::{self, Engine, KeyKind, Page, View};
 use crate::governor::Governor;
 use crate::keys;
 use crate::pads;
+use crate::trace::{self, Trace};
 
 const BASE_IMAGE: u32 = 900;
 const TILE_BUDGET: usize = 320;
@@ -36,14 +37,16 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// How long we wait for the page to close before we leave anyway.
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
 const IS_REPEAT: u32 = 1 << 13;
+/// A CEF pump past this long gets a trace line.
+const SLOW_PUMP: Duration = Duration::from_millis(8);
 
 /// What the pump thread sends the loop.
 #[derive(Debug)]
 pub(crate) enum Message {
     /// Time to run CEF's message loop.
     Pump,
-    /// The game controllers changed.
-    Pads(Vec<Pad>),
+    /// The game controllers changed; their newest state waits in the tab.
+    Pads,
 }
 
 /// The render scale range the governor picks from: pages start sharp, and
@@ -55,6 +58,18 @@ fn scale_range(multiplexed: bool) -> (f64, f64) {
     } else {
         (min, max)
     }
+}
+
+/// The most pixels we let CEF paint a frame at. Above about this, copying
+/// every frame back from the GPU falls behind and input waits behind the
+/// queued frames; the terminal scales the picture up to fill its cells.
+const MOST_PAINTED_PIXELS: f64 = 2_000_000.0;
+
+/// The largest scale that keeps a `width` by `height` CSS pixel view under
+/// [`MOST_PAINTED_PIXELS`].
+fn paint_cap(width: i32, height: i32) -> f64 {
+    let area = f64::from(width.max(1)) * f64::from(height.max(1));
+    (MOST_PAINTED_PIXELS / area).sqrt()
 }
 
 /// CSS pixels for a terminal of `size` cells of `cell` device pixels:
@@ -78,6 +93,10 @@ pub(crate) struct Tab {
     screen: PixelScreen,
     fitted: Option<CellSize>,
     frame: Option<Surface>,
+    /// When CEF handed us the frame we hold, and when the one we drew last.
+    frame_at: Option<Instant>,
+    drawn_frame_at: Option<Instant>,
+    trace: Trace,
     pointer: Pointer,
     last_press: Option<(Instant, Button, i32)>,
     held_buttons: u32,
@@ -88,6 +107,7 @@ pub(crate) struct Tab {
     title_shown: bool,
     closing: Option<Instant>,
     pads: Vec<Pad>,
+    latest_pads: Arc<Mutex<Option<Vec<Pad>>>>,
 }
 
 impl Tab {
@@ -106,6 +126,9 @@ impl Tab {
             screen: PixelScreen::default(),
             fitted: None,
             frame: None,
+            frame_at: None,
+            drawn_frame_at: None,
+            trace: Trace::from_env(),
             last_press: None,
             held_buttons: 0,
             releases_seen: false,
@@ -115,6 +138,7 @@ impl Tab {
             title_shown: false,
             closing: None,
             pads: Vec::new(),
+            latest_pads: Arc::default(),
         }
     }
 
@@ -124,7 +148,9 @@ impl Tab {
     }
 
     fn set_scale(&self) {
-        self.view.borrow_mut().scale = (self.density * self.governor.scale()) as f32;
+        let mut view = self.view.borrow_mut();
+        let wanted = self.density * self.governor.scale();
+        view.scale = wanted.min(paint_cap(view.width, view.height)) as f32;
     }
 
     /// Size the page to the terminal, opening it the first time.
@@ -172,7 +198,12 @@ impl Tab {
 
     /// Run CEF and collect what it reported.
     fn pump(&mut self) -> Control {
+        let started = Instant::now();
         self.engine.pump();
+        if self.trace.on() && started.elapsed() > SLOW_PUMP {
+            let took = trace::millis(started.elapsed());
+            self.trace.line(format_args!("pump {took:.1} ms"));
+        }
         // we queue the next pump only once this one is done, so pumps never
         // pile up while a frame is on its way
         self.pump_pending.store(false, Ordering::Relaxed);
@@ -188,7 +219,15 @@ impl Tab {
             control = Control::Redraw;
         }
         if let Some(frame) = view.frame.take() {
+            if self.trace.on() {
+                let middle = PixelPos::new(frame.width() / 2, frame.height() / 2);
+                let color = frame.get(middle).map(|pixel| (pixel.r, pixel.g, pixel.b));
+                let (width, height) = (frame.width(), frame.height());
+                self.trace
+                    .line(format_args!("paint {width}x{height} middle {color:?}"));
+            }
             self.frame = Some(frame);
+            self.frame_at = Some(Instant::now());
             control = Control::Redraw;
         }
         control
@@ -278,13 +317,16 @@ impl Tab {
 
     fn input(&mut self, event: &InputEvent) -> Control {
         match event {
-            InputEvent::Key(Key::Char('q'), mods) if mods.ctrl => {
+            InputEvent::Key(Key::Char('q' | 'c'), mods) if mods.ctrl => {
                 if let Some(page) = &self.page {
                     page.close();
                 }
                 self.closing = Some(Instant::now());
             }
-            InputEvent::Key(key, mods) => self.key_down(*key, *mods),
+            InputEvent::Key(key, mods) => {
+                self.trace.line(format_args!("key {key:?}"));
+                self.key_down(*key, *mods);
+            }
             InputEvent::KeyUp(key, mods) => self.key_up(*key, *mods),
             InputEvent::Mouse(mouse) => self.mouse(mouse),
             InputEvent::Paste(text) => {
@@ -322,9 +364,19 @@ impl App for Tab {
     type Message = Message;
 
     fn start(&mut self, waker: Waker<Message>) {
+        // a controller reports far faster than we draw, so we keep only its
+        // newest state and wake the loop once for it, never once per report
+        let latest = Arc::clone(&self.latest_pads);
         let pads = waker.clone();
         // without controller support the page plays from the keyboard
-        let _ = watch(move |now| pads.send(Message::Pads(now.to_vec())));
+        let _ = watch(move |now| {
+            let Ok(mut slot) = latest.lock() else {
+                return false;
+            };
+            let waiting = slot.replace(now.to_vec()).is_some();
+            drop(slot);
+            waiting || pads.send(Message::Pads)
+        });
         let pending = Arc::clone(&self.pump_pending);
         std::thread::spawn(move || {
             loop {
@@ -339,9 +391,17 @@ impl App for Tab {
     fn update(&mut self, event: AppEvent<Message>) -> Control {
         match event {
             AppEvent::Message(Message::Pump) => self.pump(),
-            AppEvent::Message(Message::Pads(pads)) => {
-                self.pads = pads;
-                self.show_pads();
+            AppEvent::Message(Message::Pads) => {
+                if let Some(pads) = self
+                    .latest_pads
+                    .lock()
+                    .ok()
+                    .and_then(|mut slot| slot.take())
+                {
+                    self.trace.line(format_args!("pads {}", pads.len()));
+                    self.pads = pads;
+                    self.show_pads();
+                }
                 Control::Wait
             }
             AppEvent::Input(input) => self.input(&input),
@@ -363,8 +423,12 @@ impl App for Tab {
             write_title(out, &self.url)?;
         }
         if let Some(frame) = &self.frame {
-            self.screen
+            let written = self
+                .screen
                 .render_frame(out, frame, size.columns, size.rows)?;
+            if written > 0 {
+                self.drawn_frame_at = self.frame_at;
+            }
         }
         Ok(Control::Wait)
     }
@@ -372,6 +436,19 @@ impl App for Tab {
     /// Let the governor judge how long the frame took to encode and reach
     /// the terminal.
     fn delivered(&mut self, delivery: &Delivery) {
+        if self.trace.on() {
+            let age = self
+                .drawn_frame_at
+                .map_or(0.0, |at| trace::millis(at.elapsed()));
+            let (drawn, sent) = (
+                trace::millis(delivery.drawn),
+                trace::millis(delivery.delivered),
+            );
+            let (bytes, answered) = (delivery.bytes, delivery.answered);
+            self.trace.line(format_args!(
+                "frame {bytes} B, encoded {drawn:.1} ms, delivered {sent:.1} ms, answered {answered}, frame age {age:.1} ms"
+            ));
+        }
         if self
             .governor
             .delivered(delivery.delivered, Instant::now())

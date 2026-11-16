@@ -667,9 +667,9 @@ dependencies = [
 
 [[package]]
 name = "katui"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16b6272a609a0aeaae7f624f56228e658090ecea28d99049ae85e216d5f93ee2"
+checksum = "9e84db73dc8ffa440afaaf34804e9908ca7ea62371fce707d04eb28ae89888b3"
 dependencies = [
  "katui-game",
  "katui-present",
@@ -680,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "katui-game"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "425183f8832c5d33540289e8d488e904af6aa40c5b15b1493a846b3dc5ce7fe7"
+checksum = "8c93d2b24c496420f7f8a3c3b02ddd6e7c6a62173fa22e42d487ef7e87fb6fa9"
 dependencies = [
  "katui-present",
  "katui-proto",
@@ -692,9 +692,9 @@ dependencies = [
 
 [[package]]
 name = "katui-present"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40cb273295ae63ddc4094fe7ac1da25d17d406b303d57e764ec011fa8e2b4dda"
+checksum = "aa193b4f84498bcfadd5b022893cd863c5ab03f1f026ae1312a22c5c754b516e"
 dependencies = [
  "katui-proto",
  "katui-scene",
@@ -702,9 +702,9 @@ dependencies = [
 
 [[package]]
 name = "katui-proto"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f023c4e1c264aaad4459980c5481f9b0cafe86c131d98270321f8106e6205710"
+checksum = "6e96dce39bf20be15928854811ba0991c4dd140d8a09fd1900db3907892d3d17"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -713,9 +713,9 @@ dependencies = [
 
 [[package]]
 name = "katui-rt"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f522358abe913a5e9ca2aec254e1c5dd89e73fc465b31bc772241df32099188f"
+checksum = "2dd048ba1846aa58bfb8d04b6381536b1701004d2623f91b6ee9ac11059e400c"
 dependencies = [
  "gilrs",
  "katui-present",
@@ -728,9 +728,9 @@ dependencies = [
 
 [[package]]
 name = "katui-scene"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf31ed34cc98421b9f4985c513bb6e85bf0f6f028dc2dbb90a6e0189290a9769"
+checksum = "de5adc134f1dd3d2e9c0760e3bfd6216f41a2072114abab58266061b2c0c3aa6"
 dependencies = [
  "unicode-segmentation",
  "unicode-width",
