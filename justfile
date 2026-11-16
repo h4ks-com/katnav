@@ -122,6 +122,8 @@ bundle: cef
         # the libraries differ per architecture, so we copy whichever this CEF build has
         cp -R "$CEF_PATH"/*.so* "$CEF_PATH"/vk_swiftshader_icd.json "$CEF_PATH"/*.bin \
             "$CEF_PATH"/*.dat "$CEF_PATH"/*.pak "$CEF_PATH"/locales "$out/"
+        # the linux libcef ships its debug symbols, about 2 GB of the 2.5
+        strip --strip-unneeded "$out"/libcef.so
         echo "$out/katnav"
         ;;
     esac
