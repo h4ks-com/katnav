@@ -1,7 +1,8 @@
 # katnav: agent guide
 
 A web browser in the terminal: Chromium renders off screen through CEF,
-katui shows the pixels.
+katui shows the pixels. [docs/how-it-works.md](docs/how-it-works.md) explains the
+design; read it before writing code.
 
 ## Layout
 

@@ -48,6 +48,7 @@ protocol get sixel images or colored blocks.
 
 katnav is early. It opens one page and passes your mouse and keyboard to
 it. There is no address bar, history or tabs yet.
+[docs/how-it-works.md](docs/how-it-works.md) explains how it works.
 
 ## License
 
