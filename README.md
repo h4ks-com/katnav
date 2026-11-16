@@ -19,7 +19,7 @@ these libraries first:
 
 ```sh
 sudo apt install libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
-  libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
+  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
   libcairo2 libasound2t64 libudev1
 ```
 
@@ -29,6 +29,20 @@ sudo apt install libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm
 ```sh
 brew install h4ks-com/tap/katnav
 ```
+
+</details>
+
+<details>
+<summary><b>Cargo</b></summary>
+
+You need Rust, CMake and Ninja, plus libudev on Linux.
+
+```sh
+cargo install --locked --git https://github.com/h4ks-com/katnav
+```
+
+The build downloads CEF into `~/.local/share/katnav/cef`, and the first
+run sets katnav up beside it.
 
 </details>
 

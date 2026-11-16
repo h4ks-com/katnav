@@ -339,14 +339,18 @@ pub(crate) fn run_helper() -> i32 {
     )
 }
 
-/// Where CEF keeps the profile: cookies, storage and the cache.
-fn profile_dir() -> PathBuf {
+/// Where katnav keeps its profile and, when installed bare, its bundle.
+pub(crate) fn data_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
         .unwrap_or_else(std::env::temp_dir)
         .join("katnav")
-        .join("profile")
+}
+
+/// Where CEF keeps the profile: cookies, storage and the cache.
+fn profile_dir() -> PathBuf {
+    data_dir().join("profile")
 }
 
 /// The profile this run owns, and the lock that keeps it ours. Chromium

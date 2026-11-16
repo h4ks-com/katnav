@@ -1,6 +1,7 @@
 //! katnav: a web browser in the terminal. Chromium renders the page off
 //! screen through CEF, katui puts its pixels on the screen.
 
+mod bundle;
 mod engine;
 mod governor;
 mod keys;
@@ -29,10 +30,12 @@ pub(crate) enum Error {
     #[error("could not find katnav's own executable: {0}")]
     Executable(std::io::Error),
     #[cfg(target_os = "macos")]
-    #[error(
-        "found no CEF beside {0}; install katnav with `brew install h4ks-com/tap/katnav`, or run `just run` in a clone"
-    )]
+    #[error("found no CEF beside {0}")]
     NoCef(std::path::PathBuf),
+    #[error("CEF is gone from {0}; reinstall katnav to fetch it again")]
+    CefGone(std::path::PathBuf),
+    #[error("could not set up katnav beside CEF: {0}")]
+    Bundle(std::io::Error),
     #[error("CEF did not start")]
     CefStart,
     #[error(transparent)]
@@ -97,6 +100,10 @@ fn say(text: &str) {
 
 fn main() -> ExitCode {
     let helper = engine::is_helper();
+    if !helper && let Err(error) = bundle::run_beside_cef() {
+        say(&format!("katnav: {error}"));
+        return ExitCode::FAILURE;
+    }
     let _library = match engine::load(helper) {
         Ok(library) => library,
         Err(error) => {
