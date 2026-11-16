@@ -40,6 +40,8 @@ cef:
             break
     EOF
     )
+    # python on windows ends its lines with a carriage return
+    sha1=${sha1%$'\r'}
     curl -fSL "https://cef-builds.spotifycdn.com/$name" -o "$work/$name"
     echo "$sha1  $work/$name" | shasum -c -
     export-cef-dir --force --archive "$work/$name" "$CEF_PATH"
