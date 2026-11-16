@@ -1,5 +1,12 @@
 # katnav
 
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#use">Use</a> ·
+  <a href="#status">Status</a> ·
+  <a href="https://chat.h4ks.com">IRC</a>
+</p>
+
 katnav is a web browser for the terminal. It runs Chromium off screen and
 draws each page as images in your terminal, using [katui] and the kitty
 graphics protocol, which kitty, Ghostty and WezTerm speak.
