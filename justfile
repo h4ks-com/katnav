@@ -43,7 +43,9 @@ cef:
     # python on windows ends its lines with a carriage return
     sha1=${sha1%$'\r'}
     curl -fSL "https://cef-builds.spotifycdn.com/$name" -o "$work/$name"
-    echo "$sha1  $work/$name" | shasum -c -
+    # git bash on windows has sha1sum and no shasum, older macs the reverse
+    if command -v sha1sum >/dev/null; then check=sha1sum; else check=shasum; fi
+    echo "$sha1  $work/$name" | "$check" -c -
     export-cef-dir --force --archive "$work/$name" "$CEF_PATH"
 
 # clippy with ci's denials, after every change
