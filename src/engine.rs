@@ -15,15 +15,17 @@ use std::rc::Rc as Shared;
 
 use cef::args::Args;
 use cef::{
-    App, Browser, BrowserSettings, CefString, CefStringUtf16, Client, CommandLine, DictionaryValue,
-    DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost, ImplClient, ImplCommandLine,
-    ImplDisplayHandler, ImplFrame, ImplLifeSpanHandler, ImplRenderHandler, KeyEvent, KeyEventType,
-    LifeSpanHandler, MouseButtonType, MouseEvent, PaintElementType, PopupFeatures, Range, Rect,
-    RenderHandler, ScreenInfo, Settings, WindowInfo, WindowOpenDisposition, WrapApp, WrapClient,
-    WrapDisplayHandler, WrapLifeSpanHandler, WrapRenderHandler, rc::Rc as _, wrap_app, wrap_client,
-    wrap_display_handler, wrap_life_span_handler, wrap_render_handler,
+    App, Browser, BrowserSettings, CefString, CefStringUtf16, Client, CommandLine, CursorInfo,
+    CursorType, DictionaryValue, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost,
+    ImplClient, ImplCommandLine, ImplDisplayHandler, ImplFrame, ImplLifeSpanHandler,
+    ImplRenderHandler, KeyEvent, KeyEventType, LifeSpanHandler, MouseButtonType, MouseEvent,
+    PaintElementType, PopupFeatures, Range, Rect, RenderHandler, ScreenInfo, Settings, WindowInfo,
+    WindowOpenDisposition, WrapApp, WrapClient, WrapDisplayHandler, WrapLifeSpanHandler,
+    WrapRenderHandler, rc::Rc as _, wrap_app, wrap_client, wrap_display_handler,
+    wrap_life_span_handler, wrap_render_handler,
 };
-use katui::scene::surface::Surface;
+use katui::present::session::PointerShape;
+use katui::scene::surface::{PixelRect, Surface};
 
 use crate::Error;
 
@@ -38,6 +40,10 @@ pub(crate) struct View {
     pub(crate) scale: f32,
     /// The newest frame, until the tab takes it.
     pub(crate) frame: Option<Surface>,
+    /// Where the frames painted since the tab last took one changed.
+    pub(crate) damage: Vec<PixelRect>,
+    /// The pointer shape the page asked for, until the tab shows it.
+    pub(crate) pointer: Option<PointerShape>,
     /// The page's new address, until the tab takes it.
     pub(crate) address: Option<String>,
     pub(crate) closed: bool,
@@ -48,6 +54,42 @@ type ViewCell = Shared<RefCell<View>>;
 #[derive(Clone)]
 struct Handlers {
     view: ViewCell,
+}
+
+/// A dirty rectangle from CEF in frame pixels.
+fn pixel_rect(rect: &Rect) -> Option<PixelRect> {
+    Some(PixelRect {
+        x: u32::try_from(rect.x).ok()?,
+        y: u32::try_from(rect.y).ok()?,
+        width: u32::try_from(rect.width).ok()?,
+        height: u32::try_from(rect.height).ok()?,
+    })
+}
+
+/// The terminal pointer shape closest to a CEF cursor.
+fn pointer_shape(cursor: CursorType) -> PointerShape {
+    match cursor {
+        CursorType::HAND => PointerShape::Pointer,
+        CursorType::IBEAM | CursorType::VERTICALTEXT => PointerShape::Text,
+        CursorType::CROSS | CursorType::CELL => PointerShape::Crosshair,
+        CursorType::MOVE => PointerShape::Move,
+        CursorType::WAIT => PointerShape::Wait,
+        CursorType::PROGRESS => PointerShape::Progress,
+        CursorType::HELP => PointerShape::Help,
+        CursorType::NOTALLOWED | CursorType::NODROP => PointerShape::NotAllowed,
+        CursorType::GRAB => PointerShape::Grab,
+        CursorType::GRABBING => PointerShape::Grabbing,
+        CursorType::EASTWESTRESIZE
+        | CursorType::EASTRESIZE
+        | CursorType::WESTRESIZE
+        | CursorType::COLUMNRESIZE => PointerShape::ColResize,
+        CursorType::NORTHSOUTHRESIZE
+        | CursorType::NORTHRESIZE
+        | CursorType::SOUTHRESIZE
+        | CursorType::ROWRESIZE => PointerShape::RowResize,
+        CursorType::NONE => PointerShape::Hidden,
+        _ => PointerShape::Default,
+    }
 }
 
 /// A BGRA frame from CEF as an RGBA surface.
@@ -84,7 +126,7 @@ wrap_render_handler! {
             &self,
             _browser: Option<&mut Browser>,
             type_: PaintElementType,
-            _dirty_rects: Option<&[Rect]>,
+            dirty_rects: Option<&[Rect]>,
             buffer: *const u8,
             width: c_int,
             height: c_int,
@@ -101,7 +143,10 @@ wrap_render_handler! {
             #[allow(unsafe_code)]
             let bgra = unsafe { std::slice::from_raw_parts(buffer, length) };
             if let Some(frame) = surface_from_bgra(bgra, width, height) {
-                self.handlers.view.borrow_mut().frame = Some(frame);
+                let mut view = self.handlers.view.borrow_mut();
+                view.frame = Some(frame);
+                view.damage
+                    .extend(dirty_rects.unwrap_or_default().iter().filter_map(pixel_rect));
             }
         }
     }
@@ -122,6 +167,17 @@ wrap_display_handler! {
             if frame.is_some_and(|frame| frame.is_main() == 1) {
                 self.handlers.view.borrow_mut().address = url.map(ToString::to_string);
             }
+        }
+
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            _cursor: *mut u8,
+            type_: CursorType,
+            _custom_cursor_info: Option<&CursorInfo>,
+        ) -> c_int {
+            self.handlers.view.borrow_mut().pointer = Some(pointer_shape(type_));
+            1
         }
     }
 }
@@ -207,6 +263,11 @@ wrap_app! {
                 Some(&"no-user-gesture-required".into()),
             );
             if cfg!(target_os = "linux") {
+                // pages render off screen, so we need no X server or Wayland
+                command_line.append_switch_with_value(
+                    Some(&"ozone-platform".into()),
+                    Some(&"headless".into()),
+                );
                 command_line.append_switch(Some(&"enable-unsafe-webgpu".into()));
                 command_line.append_switch_with_value(
                     Some(&"enable-features".into()),
@@ -433,6 +494,7 @@ impl Page {
             Button::Left => MouseButtonType::LEFT,
             Button::Middle => MouseButtonType::MIDDLE,
             Button::Right => MouseButtonType::RIGHT,
+            Button::Back | Button::Forward => return,
         };
         if let Some(host) = self.host() {
             host.send_mouse_click_event(Some(&mouse(at, flags)), kind, i32::from(up), count);
@@ -445,10 +507,19 @@ impl Page {
         }
     }
 
-    pub(crate) fn wheel(&self, at: (i32, i32), flags: u32, delta_y: i32) {
+    pub(crate) fn wheel(&self, at: (i32, i32), flags: u32, (delta_x, delta_y): (i32, i32)) {
         if let Some(host) = self.host() {
-            host.send_mouse_wheel_event(Some(&mouse(at, flags)), 0, delta_y);
+            host.send_mouse_wheel_event(Some(&mouse(at, flags)), delta_x, delta_y);
         }
+    }
+
+    /// Go one page back in the history, when there is one.
+    pub(crate) fn back(&self) {
+        self.browser.go_back();
+    }
+
+    pub(crate) fn forward(&self) {
+        self.browser.go_forward();
     }
 
     /// Type `text` into the focused field, as a paste does.

@@ -2,7 +2,7 @@
 //! code the DOM reports as `keyCode`, and the native key code each
 //! platform derives `KeyboardEvent.code` from, which is what games match on.
 
-use katui::proto::input::{Key, Mods};
+use katui::proto::input::{Key, KeypadKey, ModifierKey, Mods};
 
 /// One physical key: its DOM `code`, Windows key code, and native key
 /// codes on macOS (virtual key codes) and Linux (X11 key codes).
@@ -145,7 +145,70 @@ fn character(c: char) -> Option<Press> {
         .map(|(plain, _, physical)| press(*physical, *plain != c))
 }
 
-const NAMED: [(Key, Physical); 14] = [
+const MODIFIERS: [(ModifierKey, Physical); 8] = [
+    (ModifierKey::LeftShift, key("ShiftLeft", 16, 0x38, 50)),
+    (ModifierKey::RightShift, key("ShiftRight", 16, 0x3C, 62)),
+    (ModifierKey::LeftControl, key("ControlLeft", 17, 0x3B, 37)),
+    (
+        ModifierKey::RightControl,
+        key("ControlRight", 17, 0x3E, 105),
+    ),
+    (ModifierKey::LeftAlt, key("AltLeft", 18, 0x3A, 64)),
+    (ModifierKey::RightAlt, key("AltRight", 18, 0x3D, 108)),
+    (ModifierKey::LeftSuper, key("MetaLeft", 91, 0x37, 133)),
+    (ModifierKey::RightSuper, key("MetaRight", 92, 0x36, 134)),
+];
+
+const KEYPAD_DIGITS: [Physical; 10] = [
+    key("Numpad0", 96, 0x52, 90),
+    key("Numpad1", 97, 0x53, 87),
+    key("Numpad2", 98, 0x54, 88),
+    key("Numpad3", 99, 0x55, 89),
+    key("Numpad4", 100, 0x56, 83),
+    key("Numpad5", 101, 0x57, 84),
+    key("Numpad6", 102, 0x58, 85),
+    key("Numpad7", 103, 0x59, 79),
+    key("Numpad8", 104, 0x5B, 80),
+    key("Numpad9", 105, 0x5C, 81),
+];
+
+const KEYPAD: [(KeypadKey, Physical, char); 5] = [
+    (KeypadKey::Add, key("NumpadAdd", 107, 0x45, 86), '+'),
+    (
+        KeypadKey::Subtract,
+        key("NumpadSubtract", 109, 0x4E, 82),
+        '-',
+    ),
+    (
+        KeypadKey::Multiply,
+        key("NumpadMultiply", 106, 0x43, 63),
+        '*',
+    ),
+    (KeypadKey::Divide, key("NumpadDivide", 111, 0x4B, 106), '/'),
+    (KeypadKey::Decimal, key("NumpadDecimal", 110, 0x41, 91), '.'),
+];
+
+/// A keypad key, which types its digit or symbol.
+fn keypad(key: KeypadKey) -> Option<Press> {
+    let (physical, text) = match key {
+        KeypadKey::Digit(digit) => (
+            *KEYPAD_DIGITS.get(usize::from(digit))?,
+            char::from_digit(u32::from(digit), 10)?,
+        ),
+        other => KEYPAD
+            .iter()
+            .find(|(named, _, _)| *named == other)
+            .map(|(_, physical, text)| (*physical, *text))?,
+    };
+    Some(Press {
+        physical,
+        text: Some(text),
+        shifted: false,
+    })
+}
+
+const NAMED: [(Key, Physical); 15] = [
+    (Key::CapsLock, key("CapsLock", 20, 0x39, 66)),
     (Key::Enter, key("Enter", 13, 0x24, 36)),
     (Key::Tab, key("Tab", 9, 0x30, 23)),
     (Key::Backspace, key("Backspace", 8, 0x33, 22)),
@@ -166,6 +229,12 @@ fn named(key: Key) -> Option<Physical> {
     if let Key::Function(number) = key {
         return FUNCTIONS.get(usize::from(number).checked_sub(1)?).copied();
     }
+    if let Key::Modifier(modifier) = key {
+        return MODIFIERS
+            .iter()
+            .find(|(named, _)| *named == modifier)
+            .map(|(_, physical)| *physical);
+    }
     NAMED
         .iter()
         .find(|(named, _)| *named == key)
@@ -177,6 +246,7 @@ fn named(key: Key) -> Option<Physical> {
 pub(crate) fn press(key: Key) -> Option<Press> {
     match key {
         Key::Char(c) => character(c),
+        Key::Keypad(pad) => keypad(pad),
         Key::Enter => named(key).map(|physical| Press {
             physical,
             text: Some('\r'),
@@ -195,13 +265,17 @@ pub(crate) fn flags(mods: Mods, shifted: bool) -> u32 {
     const SHIFT: u32 = 1 << 1;
     const CONTROL: u32 = 1 << 2;
     const ALT: u32 = 1 << 3;
+    const COMMAND: u32 = 1 << 7;
     let bit = |on: bool, flag: u32| if on { flag } else { 0 };
-    bit(mods.shift || shifted, SHIFT) | bit(mods.ctrl, CONTROL) | bit(mods.alt, ALT)
+    bit(mods.shift || shifted, SHIFT)
+        | bit(mods.ctrl, CONTROL)
+        | bit(mods.alt, ALT)
+        | bit(mods.super_key, COMMAND)
 }
 
 #[cfg(test)]
 mod tests {
-    use katui::proto::input::{Key, Mods};
+    use katui::proto::input::{Key, KeypadKey, ModifierKey, Mods};
 
     use super::{flags, press};
 
@@ -224,6 +298,12 @@ mod tests {
     fn named_keys_match_what_games_read() {
         assert_eq!(code(Key::Up), Some(("ArrowUp", 38, false)));
         assert_eq!(code(Key::Function(11)), Some(("F11", 122, false)));
+        assert_eq!(
+            code(Key::Modifier(ModifierKey::LeftShift)),
+            Some(("ShiftLeft", 16, false))
+        );
+        let five = press(Key::Keypad(KeypadKey::Digit(5))).expect("keypad 5 is a key");
+        assert_eq!((five.physical.code, five.text), ("Numpad5", Some('5')));
         assert_eq!(code(Key::Function(30)), None);
         let enter = press(Key::Enter).expect("enter is a key");
         assert_eq!(enter.text, Some('\r'));
@@ -259,8 +339,13 @@ mod tests {
         let ctrl_alt = Mods {
             ctrl: true,
             alt: true,
-            shift: false,
+            ..Mods::NONE
         };
         assert_eq!(flags(ctrl_alt, false), 12);
+        let command = Mods {
+            super_key: true,
+            ..Mods::NONE
+        };
+        assert_eq!(flags(command, false), 128, "super is the command key");
     }
 }

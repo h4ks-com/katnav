@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use katui::present::session;
+use katui::present::session::PointerShape;
 use katui::present::surface::{PatchedKitty, PixelScreen};
 use katui::proto::input::{Button, InputEvent, Key, Mods, MouseAction, MouseEvent, Pointer};
 use katui::proto::probe::{Capabilities, CellPixels};
@@ -17,7 +18,8 @@ use katui::rt::events::Waker;
 use katui::rt::gamepad::{Pad, watch};
 use katui::rt::stash::local_stash;
 use katui::scene::CellSize;
-use katui::scene::surface::{PixelPos, Surface};
+use katui::scene::placement::CellRect;
+use katui::scene::surface::{PixelPos, PixelRect, Surface};
 
 use crate::Error;
 use crate::engine::{self, Engine, KeyKind, Page, View};
@@ -72,14 +74,22 @@ fn paint_cap(width: i32, height: i32) -> f64 {
     (MOST_PAINTED_PIXELS / area).sqrt()
 }
 
-/// CSS pixels for a terminal of `size` cells of `cell` device pixels:
-/// cells 30 pixels tall or more are a high density screen.
-fn layout(size: CellSize, cell: CellPixels) -> (i32, i32, f64) {
-    let density = if cell.height >= 30 { 2 } else { 1 };
-    let width = u32::from(size.columns) * u32::from(cell.width) / density;
-    let height = u32::from(size.rows) * u32::from(cell.height) / density;
-    let as_int = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
-    (as_int(width), as_int(height), f64::from(density))
+/// CSS pixels for a terminal of `size` cells of `cell` device pixels on a
+/// screen of `scale` device pixels per point.
+fn layout(size: CellSize, cell: CellPixels, scale: f32) -> (i32, i32, f64) {
+    let density = f64::from(scale.max(1.0));
+    let css = |cells: u16, pixels: u16| {
+        let length = f64::from(cells) * f64::from(pixels) / density;
+        // a terminal is far smaller than i32::MAX pixels
+        #[allow(clippy::cast_possible_truncation)]
+        let length = length.round() as i32;
+        length
+    };
+    (
+        css(size.columns, cell.width),
+        css(size.rows, cell.height),
+        density,
+    )
 }
 
 pub(crate) struct Tab {
@@ -102,6 +112,11 @@ pub(crate) struct Tab {
     held_buttons: u32,
     releases_seen: bool,
     held_keys: Vec<Key>,
+    /// The base layout key the terminal sent for the key event that follows.
+    base_key: Option<char>,
+    /// Where the frames CEF painted since the last draw changed.
+    damage: Vec<PixelRect>,
+    pointer_shape: Option<PointerShape>,
     governor: Governor,
     pump_pending: Arc<AtomicBool>,
     title_shown: bool,
@@ -114,6 +129,7 @@ impl Tab {
     pub(crate) fn new(engine: Engine, caps: Capabilities, url: String) -> Self {
         let cell = katui::rt::tty::cell_size(&caps);
         let (min, max) = scale_range(caps.multiplexed());
+        let releases_seen = caps.key_releases;
         Self {
             page: None,
             engine,
@@ -131,8 +147,11 @@ impl Tab {
             trace: Trace::from_env(),
             last_press: None,
             held_buttons: 0,
-            releases_seen: false,
+            releases_seen,
             held_keys: Vec::new(),
+            base_key: None,
+            damage: Vec::new(),
+            pointer_shape: None,
             governor: Governor::new(Duration::from_secs(1) / FRAMES_PER_SECOND, min, max),
             pump_pending: Arc::new(AtomicBool::new(false)),
             title_shown: false,
@@ -160,7 +179,8 @@ impl Tab {
         }
         self.cell = katui::rt::tty::cell_size(&self.caps);
         self.pointer.resize(size.columns, size.rows);
-        let (width, height, density) = layout(size, self.cell);
+        let scale = katui::rt::tty::screen_scale(&self.caps);
+        let (width, height, density) = layout(size, self.cell, scale);
         self.density = density;
         {
             let mut view = self.view.borrow_mut();
@@ -228,6 +248,11 @@ impl Tab {
             }
             self.frame = Some(frame);
             self.frame_at = Some(Instant::now());
+            self.damage.append(&mut view.damage);
+            control = Control::Redraw;
+        }
+        if let Some(shape) = view.pointer.take() {
+            self.pointer_shape = Some(shape);
             control = Control::Redraw;
         }
         control
@@ -265,20 +290,30 @@ impl Tab {
         }
         let Some(page) = &self.page else { return };
         match mouse.action {
+            MouseAction::Press(Button::Back) => page.back(),
+            MouseAction::Press(Button::Forward) => page.forward(),
             MouseAction::Press(button) => page.click(at, flags, button, false, count),
             MouseAction::Release(button) => page.click(at, flags, button, true, count),
             MouseAction::Drag(_) | MouseAction::Move => page.hover(at, flags),
-            MouseAction::WheelUp => page.wheel(at, flags, WHEEL_STEP),
-            MouseAction::WheelDown => page.wheel(at, flags, -WHEEL_STEP),
+            MouseAction::WheelUp => page.wheel(at, flags, (0, WHEEL_STEP)),
+            MouseAction::WheelDown => page.wheel(at, flags, (0, -WHEEL_STEP)),
+            MouseAction::WheelLeft => page.wheel(at, flags, (WHEEL_STEP, 0)),
+            MouseAction::WheelRight => page.wheel(at, flags, (-WHEEL_STEP, 0)),
         }
     }
 
     /// A key going down. Until the terminal has shown it reports releases
     /// we release every key right after its press, so no key sticks.
     fn key_down(&mut self, key: Key, mods: Mods) {
-        let (Some(page), Some(press)) = (&self.page, keys::press(key)) else {
+        let base = self.base_key.take();
+        let (Some(page), Some(mut press)) = (&self.page, keys::press(key)) else {
             return;
         };
+        // on another keyboard layout the base key names the physical key the
+        // page reads as KeyboardEvent.code, and the typed character stays
+        if let (Key::Char(_), Some(base)) = (key, base.and_then(|c| keys::press(Key::Char(c)))) {
+            press.physical = base.physical;
+        }
         let repeat = self.held_keys.contains(&key);
         let flags = keys::flags(mods, press.shifted) | if repeat { IS_REPEAT } else { 0 };
         let character = press.text.map_or(0, char_code);
@@ -323,10 +358,11 @@ impl Tab {
                 }
                 self.closing = Some(Instant::now());
             }
-            InputEvent::Key(key, mods) => {
+            InputEvent::Key(key, mods) | InputEvent::KeyRepeat(key, mods) => {
                 self.trace.line(format_args!("key {key:?}"));
                 self.key_down(*key, *mods);
             }
+            InputEvent::BaseLayoutKey(base) => self.base_key = Some(*base),
             InputEvent::KeyUp(key, mods) => self.key_up(*key, *mods),
             InputEvent::Mouse(mouse) => self.mouse(mouse),
             InputEvent::Paste(text) => {
@@ -357,6 +393,7 @@ fn button_flag(button: Button) -> u32 {
         Button::Left => 1 << 4,
         Button::Middle => 1 << 5,
         Button::Right => 1 << 6,
+        Button::Back | Button::Forward => 0,
     }
 }
 
@@ -422,10 +459,18 @@ impl App for Tab {
             self.title_shown = true;
             write_title(out, &self.url)?;
         }
+        if let Some(shape) = self.pointer_shape.take() {
+            session::set_pointer_shape(out, shape)?;
+        }
         if let Some(frame) = &self.frame {
-            let written = self
-                .screen
-                .render_frame(out, frame, size.columns, size.rows)?;
+            let area = CellRect::full(size.columns, size.rows);
+            let damage = std::mem::take(&mut self.damage);
+            let written = if damage.is_empty() {
+                self.screen.render_frame_in(out, frame, area)?
+            } else {
+                self.screen
+                    .render_frame_damaged(out, frame, area, &damage)?
+            };
             if written > 0 {
                 self.drawn_frame_at = self.frame_at;
             }
@@ -490,8 +535,8 @@ mod tests {
             width: 20,
             height: 40,
         };
-        assert_eq!(layout(size, plain), (1000, 800, 1.0));
-        assert_eq!(layout(size, retina), (1000, 800, 2.0));
+        assert_eq!(layout(size, plain, 1.0), (1000, 800, 1.0));
+        assert_eq!(layout(size, retina, 2.0), (1000, 800, 2.0));
     }
 
     #[test]
