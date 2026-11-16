@@ -19,11 +19,43 @@ impl Physical {
     pub(crate) fn native(self) -> i32 {
         if cfg!(target_os = "macos") {
             self.mac
+        } else if cfg!(windows) {
+            self.lparam()
         } else {
             self.x11
         }
     }
+
+    /// The `lParam` of a Windows key message, which carries the set 1 scan
+    /// code: the X11 key code less 8, except for the extended keys.
+    fn lparam(self) -> i32 {
+        const EXTENDED_FLAG: i32 = 1 << 24;
+        let (scan, flag) = EXTENDED
+            .iter()
+            .find(|(x11, _)| *x11 == self.x11)
+            .map_or((self.x11 - 8, 0), |(_, scan)| (*scan, EXTENDED_FLAG));
+        (scan << 16) | flag | 1
+    }
 }
+
+/// The extended keys by X11 key code, with their set 1 scan code.
+const EXTENDED: [(i32, i32); 15] = [
+    (105, 0x1D),
+    (106, 0x35),
+    (108, 0x38),
+    (110, 0x47),
+    (111, 0x48),
+    (112, 0x49),
+    (113, 0x4B),
+    (114, 0x4D),
+    (115, 0x4F),
+    (116, 0x50),
+    (117, 0x51),
+    (118, 0x52),
+    (119, 0x53),
+    (133, 0x5B),
+    (134, 0x5C),
+];
 
 const fn key(code: &'static str, windows: i32, mac: i32, x11: i32) -> Physical {
     Physical {
@@ -307,6 +339,19 @@ mod tests {
         assert_eq!(code(Key::Function(30)), None);
         let enter = press(Key::Enter).expect("enter is a key");
         assert_eq!(enter.text, Some('\r'));
+    }
+
+    #[test]
+    fn windows_scan_codes_follow_set_one() {
+        let lparam = |key| press(key).map(|press| press.physical.lparam());
+        assert_eq!(lparam(Key::Char('a')), Some(0x001E_0001));
+        assert_eq!(lparam(Key::Escape), Some(0x0001_0001));
+        assert_eq!(lparam(Key::Function(12)), Some(0x0058_0001));
+        assert_eq!(lparam(Key::Up), Some(0x0148_0001));
+        assert_eq!(
+            lparam(Key::Modifier(ModifierKey::RightControl)),
+            Some(0x011D_0001)
+        );
     }
 
     #[test]
