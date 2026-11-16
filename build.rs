@@ -18,9 +18,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ancestors()
         .nth(4)
         .is_some_and(|target| built.starts_with(target));
-    let cef = if in_target { keep(&built)? } else { built };
+    let os = env::var("CARGO_CFG_TARGET_OS")?;
+    // windows loads libcef.dll before main runs, so katnav runs only from
+    // its release folder and a copy would serve nothing
+    let cef = if in_target && os != "windows" {
+        keep(&built)?
+    } else {
+        built
+    };
     println!("cargo::rustc-env=KATNAV_CEF_DIR={}", cef.display());
-    if env::var("CARGO_CFG_TARGET_OS")? == "linux" {
+    if os == "linux" {
         println!(
             "cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN:{}",
             cef.display()

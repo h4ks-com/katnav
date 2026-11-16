@@ -344,6 +344,7 @@ pub(crate) fn data_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
         .unwrap_or_else(std::env::temp_dir)
         .join("katnav")
 }

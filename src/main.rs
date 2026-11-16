@@ -1,6 +1,7 @@
 //! katnav: a web browser in the terminal. Chromium renders the page off
 //! screen through CEF, katui puts its pixels on the screen.
 
+#[cfg(unix)]
 mod bundle;
 mod engine;
 mod governor;
@@ -32,8 +33,10 @@ pub(crate) enum Error {
     #[cfg(target_os = "macos")]
     #[error("found no CEF beside {0}")]
     NoCef(std::path::PathBuf),
+    #[cfg(unix)]
     #[error("CEF is gone from {0}; reinstall katnav to fetch it again")]
     CefGone(std::path::PathBuf),
+    #[cfg(unix)]
     #[error("could not set up katnav beside CEF: {0}")]
     Bundle(std::io::Error),
     #[error("CEF did not start")]
@@ -73,12 +76,22 @@ fn url_from_argument(argument: &str) -> String {
     if path.exists()
         && let Ok(absolute) = path.canonicalize()
     {
-        return format!("file://{}", absolute.display());
+        return file_url(&absolute);
     }
     if argument.contains("://") || argument.starts_with("about:") || argument.starts_with("data:") {
         return argument.to_owned();
     }
     format!("https://{argument}")
+}
+
+/// The `file://` URL of an absolute path, with a third slash before a
+/// windows drive letter.
+fn file_url(absolute: &Path) -> String {
+    let path = absolute.display().to_string();
+    // windows canonicalizes to the verbatim `\\?\C:\` form, which no URL takes
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+    let slash = if path.starts_with('/') { "" } else { "/" };
+    format!("file://{slash}{path}")
 }
 
 fn browse(request: Request) -> Result<(), Error> {
@@ -100,6 +113,7 @@ fn say(text: &str) {
 
 fn main() -> ExitCode {
     let helper = engine::is_helper();
+    #[cfg(unix)]
     if !helper && let Err(error) = bundle::run_beside_cef() {
         say(&format!("katnav: {error}"));
         return ExitCode::FAILURE;
@@ -129,7 +143,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, parse, url_from_argument};
+    use std::path::Path;
+
+    use super::{Request, file_url, parse, url_from_argument};
 
     #[test]
     fn a_bare_host_gets_https_and_a_url_stays_as_it_is() {
@@ -140,6 +156,15 @@ mod tests {
         );
         assert_eq!(url_from_argument("about:blank"), "about:blank");
         assert!(url_from_argument("Cargo.toml").starts_with("file:///"));
+    }
+
+    #[test]
+    fn a_windows_path_makes_a_file_url() {
+        assert_eq!(
+            file_url(Path::new(r"\\?\C:\pages\a.html")),
+            r"file:///C:\pages\a.html"
+        );
+        assert_eq!(file_url(Path::new("/pages/a.html")), "file:///pages/a.html");
     }
 
     #[test]
