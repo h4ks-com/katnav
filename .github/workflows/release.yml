@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       CEF_PATH: ${{ github.workspace }}/../cef
@@ -59,15 +59,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libudev-dev
+      # cef-dll-sys builds its C++ wrapper with CMake and Ninja
+      - if: runner.os == 'Windows'
+        run: choco install ninja --no-progress
       - uses: actions/cache@v5
         with:
           path: ${{ env.CEF_PATH }}
           key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml') }}
       - run: just dist
+        shell: bash
       - uses: actions/upload-artifact@v7
         with:
           name: katnav-${{ matrix.os }}
-          path: katnav-*.tar.gz
+          path: |
+            katnav-*.tar.gz
+            katnav-*.zip
 
   github:
     needs: archives
@@ -82,4 +88,6 @@ jobs:
           path: dist
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
