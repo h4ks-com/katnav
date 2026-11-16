@@ -8,6 +8,7 @@
 )]
 
 use std::cell::RefCell;
+use std::fs::File;
 use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::rc::Rc as Shared;
@@ -272,16 +273,32 @@ fn profile_dir() -> PathBuf {
         .join("profile")
 }
 
+/// The profile this run owns, and the lock that keeps it ours. Chromium
+/// hands a URL to whichever process holds a profile and opens it there in
+/// a desktop window, so a second katnav takes a fresh profile of its own.
+fn claim_profile() -> (PathBuf, Option<File>) {
+    let shared = profile_dir();
+    let _ = std::fs::create_dir_all(&shared);
+    if let Ok(lock) = File::create(shared.with_extension("lock"))
+        && lock.try_lock().is_ok()
+    {
+        return (shared, Some(lock));
+    }
+    let own = std::env::temp_dir().join(format!("katnav-profile-{}", std::process::id()));
+    (own, None)
+}
+
 /// CEF, initialized in the browser process.
 pub(crate) struct Engine {
     _app: App,
+    _profile_lock: Option<File>,
 }
 
 impl Engine {
     pub(crate) fn start(mute: bool) -> Result<Self, Error> {
         let args = Args::new();
         let mut app = AppBuilder::new(Switches { mute });
-        let profile = profile_dir();
+        let (profile, profile_lock) = claim_profile();
         let settings = Settings {
             windowless_rendering_enabled: 1,
             external_message_pump: 1,
@@ -298,7 +315,10 @@ impl Engine {
             std::ptr::null_mut(),
         );
         if started == 1 {
-            Ok(Self { _app: app })
+            Ok(Self {
+                _app: app,
+                _profile_lock: profile_lock,
+            })
         } else {
             Err(Error::CefStart)
         }
@@ -439,6 +459,13 @@ impl Page {
                 to: u32::MAX,
             };
             host.ime_commit_text(Some(&text.into()), Some(&nowhere), 0);
+        }
+    }
+
+    /// Run `script` in the page's main frame.
+    pub(crate) fn run_script(&self, script: &str) {
+        if let Some(frame) = self.browser.main_frame() {
+            frame.execute_java_script(Some(&script.into()), None, 0);
         }
     }
 

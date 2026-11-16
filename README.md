@@ -14,7 +14,7 @@ get JavaScript, WebAssembly with threads, WebGL, WebGPU and sound.
 ## Build
 
 katnav runs on macOS and builds on Linux, where it is not tested yet. You
-need Rust, [just], CMake and Python 3. On macOS with Homebrew:
+need Rust, [just], CMake and Python 3, plus libudev on Linux. On macOS with Homebrew:
 
 ```
 brew install rustup just cmake && rustup-init -y
@@ -35,6 +35,9 @@ file.
 
 Scroll with the mouse wheel, click and type as in any browser, and press
 <kbd>Ctrl</kbd>+<kbd>Q</kbd> to quit. Add `--mute` to turn sound off.
+
+Game controllers work too. katnav reads them itself and hands them to the
+page, so web games that support controllers see yours.
 
 When a page draws faster than your terminal can show it, as games do,
 katnav lowers the resolution until the frames keep up. Inside tmux it

@@ -14,6 +14,7 @@ use katui::proto::input::{Button, InputEvent, Key, Mods, MouseAction, MouseEvent
 use katui::proto::probe::{Capabilities, CellPixels};
 use katui::rt::app::{App, AppEvent, Control, Delivery};
 use katui::rt::events::Waker;
+use katui::rt::gamepad::{Pad, watch};
 use katui::rt::stash::local_stash;
 use katui::scene::CellSize;
 use katui::scene::surface::Surface;
@@ -22,6 +23,7 @@ use crate::Error;
 use crate::engine::{self, Engine, KeyKind, Page, View};
 use crate::governor::Governor;
 use crate::keys;
+use crate::pads;
 
 const BASE_IMAGE: u32 = 900;
 const TILE_BUDGET: usize = 320;
@@ -40,6 +42,8 @@ const IS_REPEAT: u32 = 1 << 13;
 pub(crate) enum Message {
     /// Time to run CEF's message loop.
     Pump,
+    /// The game controllers changed.
+    Pads(Vec<Pad>),
 }
 
 /// The render scale range the governor picks from: pages start sharp, and
@@ -83,6 +87,7 @@ pub(crate) struct Tab {
     pump_pending: Arc<AtomicBool>,
     title_shown: bool,
     closing: Option<Instant>,
+    pads: Vec<Pad>,
 }
 
 impl Tab {
@@ -109,6 +114,7 @@ impl Tab {
             pump_pending: Arc::new(AtomicBool::new(false)),
             title_shown: false,
             closing: None,
+            pads: Vec::new(),
         }
     }
 
@@ -157,6 +163,13 @@ impl Tab {
         Ok(())
     }
 
+    /// Hand the page the game controllers as they are now.
+    fn show_pads(&self) {
+        if let Some(page) = &self.page {
+            page.run_script(&pads::script(&self.pads));
+        }
+    }
+
     /// Run CEF and collect what it reported.
     fn pump(&mut self) -> Control {
         self.engine.pump();
@@ -171,6 +184,7 @@ impl Tab {
         if let Some(address) = view.address.take() {
             self.url = address;
             self.title_shown = false;
+            self.show_pads();
             control = Control::Redraw;
         }
         if let Some(frame) = view.frame.take() {
@@ -308,6 +322,9 @@ impl App for Tab {
     type Message = Message;
 
     fn start(&mut self, waker: Waker<Message>) {
+        let pads = waker.clone();
+        // without controller support the page plays from the keyboard
+        let _ = watch(move |now| pads.send(Message::Pads(now.to_vec())));
         let pending = Arc::clone(&self.pump_pending);
         std::thread::spawn(move || {
             loop {
@@ -322,6 +339,11 @@ impl App for Tab {
     fn update(&mut self, event: AppEvent<Message>) -> Control {
         match event {
             AppEvent::Message(Message::Pump) => self.pump(),
+            AppEvent::Message(Message::Pads(pads)) => {
+                self.pads = pads;
+                self.show_pads();
+                Control::Wait
+            }
             AppEvent::Input(input) => self.input(&input),
             AppEvent::Resized(_) => Control::Redraw,
             AppEvent::Repaint => {

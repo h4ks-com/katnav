@@ -4,6 +4,7 @@
 mod engine;
 mod governor;
 mod keys;
+mod pads;
 mod tab;
 
 use std::io::Write as _;
