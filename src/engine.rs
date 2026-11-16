@@ -56,6 +56,12 @@ struct Handlers {
     view: ViewCell,
 }
 
+/// The native cursor handle CEF passes along with a cursor change.
+#[cfg(target_os = "macos")]
+type Cursor = *mut u8;
+#[cfg(not(target_os = "macos"))]
+type Cursor = cef::CursorHandle;
+
 /// A dirty rectangle from CEF in frame pixels.
 fn pixel_rect(rect: &Rect) -> Option<PixelRect> {
     Some(PixelRect {
@@ -172,7 +178,7 @@ wrap_display_handler! {
         fn on_cursor_change(
             &self,
             _browser: Option<&mut Browser>,
-            _cursor: *mut u8,
+            _cursor: Cursor,
             type_: CursorType,
             _custom_cursor_info: Option<&CursorInfo>,
         ) -> c_int {
