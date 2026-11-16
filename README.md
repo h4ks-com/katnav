@@ -98,8 +98,22 @@ local file:
 katnav example.com
 ```
 
-Scroll with the mouse wheel, click and type as in any browser, and press
-<kbd>Ctrl</kbd>+<kbd>C</kbd> to quit. Add `--mute` to turn sound off.
+Run `katnav` alone to start at the address bar. Add `--mute` to turn
+sound off.
+
+Scroll with the mouse wheel, click and type as in any browser. The top
+row holds back, forward and reload buttons and the address bar. Type a
+URL or host there to open it, or anything else to search DuckDuckGo.
+
+| Key | Action |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>L</kbd> | type an address or search |
+| <kbd>Enter</kbd> | open what you typed |
+| <kbd>Esc</kbd> | go back to the page |
+| <kbd>Alt</kbd>+<kbd>←</kbd> | go back |
+| <kbd>Alt</kbd>+<kbd>→</kbd> | go forward |
+| <kbd>Ctrl</kbd>+<kbd>R</kbd> | reload |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> | quit |
 
 Game controllers work too. katnav reads them itself and hands them to the
 page, so web games that support controllers see yours.
@@ -111,8 +125,8 @@ protocol get sixel images or colored blocks.
 
 ## Status
 
-katnav is early. It opens one page and passes your mouse and keyboard to
-it. There is no address bar, history or tabs yet.
+katnav is early. It shows one page at a time with an address bar and
+back and forward. There are no tabs or bookmarks yet.
 [docs/how-it-works.md](docs/how-it-works.md) explains how it works.
 
 ## License

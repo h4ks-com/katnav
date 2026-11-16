@@ -21,6 +21,21 @@ Pages run between 0.25 and 1.0 of the terminal's pixels, half of that
 under a multiplexer, and never paint more than 2 megapixels. The terminal
 scales the picture up to fill its cells.
 
+## Toolbar
+
+The first terminal row is the toolbar, drawn as katui cells: back,
+forward, reload and the address field. The page gets
+the rows below it, so the view size katnav gives CEF leaves that row out
+and mouse positions on the page move up by it. CEF's display and load
+handlers report the address, the title and whether the page is loading
+and can go back or forward; katnav redraws the toolbar from them and puts
+the title in the terminal window title.
+
+While the address field has focus it takes the keys and pastes, and the
+page gets none. Text with a space, or a single word without a dot,
+becomes a DuckDuckGo search; anything else opens as the command line
+argument does.
+
 ## Input
 
 | Terminal (katui `InputEvent`) | Page (CEF) |

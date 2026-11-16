@@ -22,6 +22,7 @@ use katui::scene::placement::CellRect;
 use katui::scene::surface::{PixelPos, PixelRect, Surface};
 
 use crate::Error;
+use crate::bar::{self, Bar, Outcome, Shortcut, Target};
 use crate::engine::{self, Engine, KeyKind, Page, View};
 use crate::governor::Governor;
 use crate::keys;
@@ -74,7 +75,27 @@ fn paint_cap(width: i32, height: i32) -> f64 {
     (MOST_PAINTED_PIXELS / area).sqrt()
 }
 
-/// CSS pixels for a terminal of `size` cells of `cell` device pixels on a
+/// The cells the page gets: the terminal less the bar's rows.
+fn page_area(size: CellSize) -> CellRect {
+    CellRect {
+        x: 0,
+        y: bar::ROWS,
+        columns: size.columns,
+        rows: size.rows.saturating_sub(bar::ROWS),
+    }
+}
+
+/// The page's CSS pixel under the terminal's device pixel `(x, y)`.
+fn page_point((x, y): (f32, f32), cell: CellPixels, density: f64) -> (i32, i32) {
+    let top = f64::from(bar::ROWS) * f64::from(cell.height);
+    let ratio = 1.0 / density;
+    (
+        (f64::from(x) * ratio) as i32,
+        ((f64::from(y) - top) * ratio) as i32,
+    )
+}
+
+/// CSS pixels for a page of `size` cells of `cell` device pixels on a
 /// screen of `scale` device pixels per point.
 fn layout(size: CellSize, cell: CellPixels, scale: f32) -> (i32, i32, f64) {
     let density = f64::from(scale.max(1.0));
@@ -96,13 +117,17 @@ pub(crate) struct Tab {
     page: Option<Page>,
     engine: Engine,
     view: Rc<RefCell<View>>,
-    url: String,
+    bar: Bar,
+    /// The window title: the page's title, or its URL until it has one.
+    title: String,
     caps: Capabilities,
     cell: CellPixels,
     density: f64,
     screen: PixelScreen,
     fitted: Option<CellSize>,
     frame: Option<Surface>,
+    /// Whether the frame we hold still has to reach the terminal.
+    frame_stale: bool,
     /// When CEF handed us the frame we hold, and when the one we drew last.
     frame_at: Option<Instant>,
     drawn_frame_at: Option<Instant>,
@@ -126,15 +151,23 @@ pub(crate) struct Tab {
 }
 
 impl Tab {
-    pub(crate) fn new(engine: Engine, caps: Capabilities, url: String) -> Self {
+    /// A tab opening `url`, or a blank page with the address field
+    /// focused when there is none.
+    pub(crate) fn new(engine: Engine, caps: Capabilities, url: Option<String>) -> Self {
         let cell = katui::rt::tty::cell_size(&caps);
         let (min, max) = scale_range(caps.multiplexed());
         let releases_seen = caps.key_releases;
+        let mut bar = Bar::default();
+        if url.is_none() {
+            bar.focus("");
+        }
+        bar.url = url.unwrap_or_else(|| "about:blank".to_owned());
         Self {
             page: None,
             engine,
             view: Rc::new(RefCell::new(View::default())),
-            url,
+            title: bar.url.clone(),
+            bar,
             pointer: Pointer::new(caps.cell, cell),
             caps,
             cell,
@@ -142,6 +175,7 @@ impl Tab {
             screen: PixelScreen::default(),
             fitted: None,
             frame: None,
+            frame_stale: false,
             frame_at: None,
             drawn_frame_at: None,
             trace: Trace::from_env(),
@@ -180,7 +214,12 @@ impl Tab {
         self.cell = katui::rt::tty::cell_size(&self.caps);
         self.pointer.resize(size.columns, size.rows);
         let scale = katui::rt::tty::screen_scale(&self.caps);
-        let (width, height, density) = layout(size, self.cell, scale);
+        let area = page_area(size);
+        let page_size = CellSize {
+            columns: area.columns,
+            rows: area.rows,
+        };
+        let (width, height, density) = layout(page_size, self.cell, scale);
         self.density = density;
         {
             let mut view = self.view.borrow_mut();
@@ -189,7 +228,7 @@ impl Tab {
         }
         self.set_scale();
         if self.page.is_none() {
-            self.page = Some(self.engine.open(&self.url, &self.view)?);
+            self.page = Some(self.engine.open(&self.bar.url, &self.view)?);
         }
         if let Some(page) = &self.page {
             page.resized();
@@ -205,6 +244,8 @@ impl Tab {
             presenter = presenter.with_stash(stash);
         }
         self.screen = PixelScreen::new(&self.caps, self.cell, presenter);
+        self.bar.invalidate();
+        self.frame_stale = true;
         self.fitted = Some(size);
         Ok(())
     }
@@ -233,9 +274,19 @@ impl Tab {
         }
         let mut control = Control::Wait;
         if let Some(address) = view.address.take() {
-            self.url = address;
+            self.title.clone_from(&address);
+            self.bar.url = address;
             self.title_shown = false;
             self.show_pads();
+            control = Control::Redraw;
+        }
+        if let Some(title) = view.title.take().filter(|title| !title.is_empty()) {
+            self.title = title;
+            self.title_shown = false;
+            control = Control::Redraw;
+        }
+        if let Some(loading) = view.loading.take() {
+            self.bar.state = loading;
             control = Control::Redraw;
         }
         if let Some(frame) = view.frame.take() {
@@ -247,6 +298,7 @@ impl Tab {
                     .line(format_args!("paint {width}x{height} middle {color:?}"));
             }
             self.frame = Some(frame);
+            self.frame_stale = true;
             self.frame_at = Some(Instant::now());
             self.damage.append(&mut view.damage);
             control = Control::Redraw;
@@ -258,11 +310,35 @@ impl Tab {
         control
     }
 
-    /// The CSS pixel under `mouse`.
-    fn css_point(&mut self, mouse: &MouseEvent) -> (i32, i32) {
-        let (x, y) = self.pointer.locate(mouse, self.cell);
-        let ratio = 1.0 / self.density;
-        ((f64::from(x) * ratio) as i32, (f64::from(y) * ratio) as i32)
+    fn act(&mut self, target: Target) {
+        if target == Target::Address {
+            let url = self.bar.url.clone();
+            self.bar.focus(&url);
+            self.release_keys();
+            return;
+        }
+        let Some(page) = &self.page else { return };
+        match target {
+            Target::Back => page.back(),
+            Target::Forward => page.forward(),
+            Target::Reload if self.bar.state.busy => page.stop(),
+            _ => page.reload(),
+        }
+    }
+
+    fn release_keys(&mut self) {
+        for key in std::mem::take(&mut self.held_keys) {
+            self.key_up(key, Mods::NONE);
+        }
+    }
+
+    /// A click on the bar's row, which leaves the page alone.
+    fn bar_mouse(&mut self, mouse: &MouseEvent, x: f32) {
+        if mouse.action == MouseAction::Press(Button::Left) {
+            let column = (x / f32::from(self.cell.width)).max(0.0);
+            #[allow(clippy::cast_sign_loss, reason = "the column is clamped at zero")]
+            self.act(bar::target(column as u16));
+        }
     }
 
     fn click_count(&mut self, button: Button) -> i32 {
@@ -276,9 +352,16 @@ impl Tab {
     }
 
     fn mouse(&mut self, mouse: &MouseEvent) {
-        let at = self.css_point(mouse);
+        let (x, y) = self.pointer.locate(mouse, self.cell);
+        let bar_bottom = f32::from(bar::ROWS) * f32::from(self.cell.height);
+        if y < bar_bottom && self.held_buttons == 0 {
+            self.bar_mouse(mouse, x);
+            return;
+        }
+        let at = page_point((x, y), self.cell, self.density);
         if let MouseAction::Press(button) = mouse.action {
             self.held_buttons |= button_flag(button);
+            self.bar.blur();
         }
         let count = match mouse.action {
             MouseAction::Press(button) => self.click_count(button),
@@ -350,7 +433,32 @@ impl Tab {
         });
     }
 
-    fn input(&mut self, event: &InputEvent) -> Control {
+    /// A key or paste for the focused address field.
+    fn type_in_bar(&mut self, event: &InputEvent) {
+        let event = match event {
+            InputEvent::KeyRepeat(key, mods) => &InputEvent::Key(*key, *mods),
+            other => other,
+        };
+        if let Outcome::Open(url) = self.bar.input(event)
+            && let Some(page) = &self.page
+        {
+            page.load(&url);
+            self.bar.url = url;
+        }
+    }
+
+    fn shortcut(&mut self, shortcut: Shortcut) {
+        match shortcut {
+            Shortcut::Focus => self.act(Target::Address),
+            Shortcut::Reload => self.act(Target::Reload),
+            Shortcut::Back => self.act(Target::Back),
+            Shortcut::Forward => self.act(Target::Forward),
+        }
+    }
+
+    /// Take `event` for the browser itself, before the page sees it:
+    /// quitting, the bar's shortcuts, and typing while the bar has focus.
+    fn browser_input(&mut self, event: &InputEvent) -> bool {
         match event {
             InputEvent::Key(Key::Char('q' | 'c'), mods) if mods.ctrl => {
                 if let Some(page) = &self.page {
@@ -358,6 +466,39 @@ impl Tab {
                 }
                 self.closing = Some(Instant::now());
             }
+            InputEvent::Key(..) | InputEvent::KeyRepeat(..) | InputEvent::Paste(_)
+                if self.bar.focused() =>
+            {
+                self.type_in_bar(event);
+            }
+            InputEvent::KeyUp(..) | InputEvent::BaseLayoutKey(_) if self.bar.focused() => {}
+            InputEvent::Key(key, mods) if let Some(shortcut) = bar::shortcut(*key, *mods) => {
+                self.shortcut(shortcut);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn input(&mut self, event: &InputEvent) -> Control {
+        if !self.browser_input(event) {
+            self.page_input(event);
+        }
+        // only presses and typing can change the bar; we skip a redraw for
+        // the rest, which the page answers with frames of its own
+        match event {
+            InputEvent::Key(..) | InputEvent::KeyRepeat(..) | InputEvent::Paste(_) => {
+                Control::Redraw
+            }
+            InputEvent::Mouse(mouse) if matches!(mouse.action, MouseAction::Press(_)) => {
+                Control::Redraw
+            }
+            _ => Control::Wait,
+        }
+    }
+
+    fn page_input(&mut self, event: &InputEvent) {
+        match event {
             InputEvent::Key(key, mods) | InputEvent::KeyRepeat(key, mods) => {
                 self.trace.line(format_args!("key {key:?}"));
                 self.key_down(*key, *mods);
@@ -371,14 +512,9 @@ impl Tab {
                 }
             }
             InputEvent::Mode(..) => self.pointer.observe(event),
-            InputEvent::Focus(false) => {
-                for key in std::mem::take(&mut self.held_keys) {
-                    self.key_up(key, Mods::NONE);
-                }
-            }
+            InputEvent::Focus(false) => self.release_keys(),
             _ => {}
         }
-        Control::Wait
     }
 }
 
@@ -442,9 +578,14 @@ impl App for Tab {
                 Control::Wait
             }
             AppEvent::Input(input) => self.input(&input),
-            AppEvent::Resized(_) => Control::Redraw,
+            AppEvent::Resized(_) => {
+                self.frame_stale = true;
+                Control::Redraw
+            }
             AppEvent::Repaint => {
                 self.screen.repaint();
+                self.bar.invalidate();
+                self.frame_stale = true;
                 Control::Redraw
             }
         }
@@ -457,13 +598,15 @@ impl App for Tab {
         self.fit(out, size).map_err(io::Error::other)?;
         if !self.title_shown {
             self.title_shown = true;
-            write_title(out, &self.url)?;
+            write_title(out, &self.title)?;
         }
         if let Some(shape) = self.pointer_shape.take() {
             session::set_pointer_shape(out, shape)?;
         }
-        if let Some(frame) = &self.frame {
-            let area = CellRect::full(size.columns, size.rows);
+        self.bar.draw(out, size.columns)?;
+        if let Some(frame) = self.frame.as_ref().filter(|_| self.frame_stale) {
+            self.frame_stale = false;
+            let area = page_area(size);
             let damage = std::mem::take(&mut self.damage);
             let written = if damage.is_empty() {
                 self.screen.render_frame_in(out, frame, area)?
@@ -519,7 +662,32 @@ mod tests {
     use katui::proto::probe::CellPixels;
     use katui::scene::CellSize;
 
-    use super::{layout, scale_range};
+    use katui::scene::placement::CellRect;
+
+    use super::{layout, page_area, page_point, scale_range};
+
+    #[test]
+    fn the_page_sits_below_the_bar() {
+        let size = CellSize {
+            columns: 120,
+            rows: 30,
+        };
+        assert_eq!(
+            page_area(size),
+            CellRect {
+                x: 0,
+                y: 1,
+                columns: 120,
+                rows: 29,
+            }
+        );
+        let cell = CellPixels {
+            width: 10,
+            height: 20,
+        };
+        assert_eq!(page_point((50.0, 20.0), cell, 1.0), (50, 0));
+        assert_eq!(page_point((50.0, 120.0), cell, 2.0), (25, 50));
+    }
 
     #[test]
     fn dense_cells_lay_out_at_half_the_device_pixels() {

@@ -18,11 +18,12 @@ use cef::{
     App, Browser, BrowserSettings, CefString, CefStringUtf16, Client, CommandLine, CursorInfo,
     CursorType, DictionaryValue, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost,
     ImplClient, ImplCommandLine, ImplDisplayHandler, ImplFrame, ImplLifeSpanHandler,
-    ImplRenderHandler, KeyEvent, KeyEventType, LifeSpanHandler, MouseButtonType, MouseEvent,
-    PaintElementType, PopupFeatures, Range, Rect, RenderHandler, ScreenInfo, Settings, WindowInfo,
-    WindowOpenDisposition, WrapApp, WrapClient, WrapDisplayHandler, WrapLifeSpanHandler,
-    WrapRenderHandler, rc::Rc as _, wrap_app, wrap_client, wrap_display_handler,
-    wrap_life_span_handler, wrap_render_handler,
+    ImplLoadHandler, ImplRenderHandler, KeyEvent, KeyEventType, LifeSpanHandler, LoadHandler,
+    MouseButtonType, MouseEvent, PaintElementType, PopupFeatures, Range, Rect, RenderHandler,
+    ScreenInfo, Settings, WindowInfo, WindowOpenDisposition, WrapApp, WrapClient,
+    WrapDisplayHandler, WrapLifeSpanHandler, WrapLoadHandler, WrapRenderHandler, rc::Rc as _,
+    wrap_app, wrap_client, wrap_display_handler, wrap_life_span_handler, wrap_load_handler,
+    wrap_render_handler,
 };
 use katui::present::session::PointerShape;
 use katui::scene::surface::{PixelRect, Surface};
@@ -46,7 +47,19 @@ pub(crate) struct View {
     pub(crate) pointer: Option<PointerShape>,
     /// The page's new address, until the tab takes it.
     pub(crate) address: Option<String>,
+    /// The page's new title, until the tab takes it.
+    pub(crate) title: Option<String>,
+    /// Whether the page loads and which ways its history goes, until the
+    /// tab takes it.
+    pub(crate) loading: Option<Loading>,
     pub(crate) closed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Loading {
+    pub(crate) busy: bool,
+    pub(crate) back: bool,
+    pub(crate) forward: bool,
 }
 
 type ViewCell = Shared<RefCell<View>>;
@@ -175,6 +188,10 @@ wrap_display_handler! {
             }
         }
 
+        fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
+            self.handlers.view.borrow_mut().title = title.map(ToString::to_string);
+        }
+
         fn on_cursor_change(
             &self,
             _browser: Option<&mut Browser>,
@@ -223,11 +240,34 @@ wrap_life_span_handler! {
     }
 }
 
+wrap_load_handler! {
+    struct LoadHandlerBuilder {
+        handlers: Handlers,
+    }
+
+    impl LoadHandler {
+        fn on_loading_state_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            is_loading: c_int,
+            can_go_back: c_int,
+            can_go_forward: c_int,
+        ) {
+            self.handlers.view.borrow_mut().loading = Some(Loading {
+                busy: is_loading == 1,
+                back: can_go_back == 1,
+                forward: can_go_forward == 1,
+            });
+        }
+    }
+}
+
 wrap_client! {
     struct ClientBuilder {
         render: RenderHandler,
         display: DisplayHandler,
         life_span: LifeSpanHandler,
+        load: LoadHandler,
     }
 
     impl Client {
@@ -241,6 +281,10 @@ wrap_client! {
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
             Some(self.life_span.clone())
+        }
+
+        fn load_handler(&self) -> Option<LoadHandler> {
+            Some(self.load.clone())
         }
     }
 }
@@ -423,7 +467,8 @@ impl Engine {
         let mut client = ClientBuilder::new(
             RenderHandlerBuilder::new(handlers.clone()),
             DisplayHandlerBuilder::new(handlers.clone()),
-            LifeSpanHandlerBuilder::new(handlers),
+            LifeSpanHandlerBuilder::new(handlers.clone()),
+            LoadHandlerBuilder::new(handlers),
         );
         let window = WindowInfo {
             windowless_rendering_enabled: 1,
@@ -540,6 +585,20 @@ impl Page {
 
     pub(crate) fn forward(&self) {
         self.browser.go_forward();
+    }
+
+    pub(crate) fn reload(&self) {
+        self.browser.reload();
+    }
+
+    pub(crate) fn stop(&self) {
+        self.browser.stop_load();
+    }
+
+    pub(crate) fn load(&self, url: &str) {
+        if let Some(frame) = self.browser.main_frame() {
+            frame.load_url(Some(&url.into()));
+        }
     }
 
     /// Type `text` into the focused field, as a paste does.

@@ -1,6 +1,7 @@
 //! katnav: a web browser in the terminal. Chromium renders the page off
 //! screen through CEF, katui puts its pixels on the screen.
 
+mod bar;
 #[cfg(unix)]
 mod bundle;
 mod engine;
@@ -19,11 +20,12 @@ use katui::rt::app::run_app;
 use crate::engine::Engine;
 use crate::tab::{FRAMES_PER_SECOND, Tab};
 
-const USAGE: &str = "usage: katnav [--mute] <url or file>
+const USAGE: &str = "usage: katnav [--mute] [url or file]
 
   --mute  play no sound
 
-ctrl-c or ctrl-q to quit";
+ctrl-l type an address, alt-left go back, alt-right go forward,
+ctrl-r reload, ctrl-c or ctrl-q quit";
 
 /// Everything that stops katnav from showing a page.
 #[derive(Debug, thiserror::Error)]
@@ -50,7 +52,8 @@ pub(crate) enum Error {
 /// What the user asked for on the command line.
 #[derive(Debug, PartialEq, Eq)]
 struct Request {
-    url: String,
+    /// The page to open, or none to start at the address field.
+    url: Option<String>,
     mute: bool,
 }
 
@@ -66,7 +69,7 @@ fn parse(arguments: impl IntoIterator<Item = String>) -> Option<Request> {
             _ => url = Some(url_from_argument(&argument)),
         }
     }
-    Some(Request { url: url?, mute })
+    Some(Request { url, mute })
 }
 
 /// What the user typed as a URL: a file that exists, a URL with a
@@ -168,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn flags_go_anywhere_and_one_url_is_required() {
+    fn flags_go_anywhere_and_one_url_at_most() {
         let arguments = |list: &[&str]| {
             list.iter()
                 .map(|text| (*text).to_owned())
@@ -177,11 +180,17 @@ mod tests {
         assert_eq!(
             parse(arguments(&["--mute", "example.com"])),
             Some(Request {
-                url: "https://example.com".to_owned(),
+                url: Some("https://example.com".to_owned()),
                 mute: true,
             })
         );
-        assert_eq!(parse(arguments(&["--mute"])), None);
+        assert_eq!(
+            parse(arguments(&["--mute"])),
+            Some(Request {
+                url: None,
+                mute: true,
+            })
+        );
         assert_eq!(parse(arguments(&["a.com", "b.com"])), None);
         assert_eq!(parse(arguments(&["--help"])), None);
     }
