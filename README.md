@@ -35,7 +35,12 @@ brew install h4ks-com/tap/katnav
 <details>
 <summary><b>Windows</b></summary>
 
-Download `katnav-x86_64-pc-windows-msvc.zip` from the
+```sh
+scoop bucket add h4ks https://github.com/h4ks-com/scoop-bucket
+scoop install h4ks/katnav
+```
+
+Or download `katnav-x86_64-pc-windows-msvc.zip` from the
 [releases page](https://github.com/h4ks-com/katnav/releases), unzip it
 and run `katnav\katnav.exe` in
 [WezTerm nightly](https://wezterm.org/install/windows.html), which shows
