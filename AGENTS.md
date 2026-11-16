@@ -17,8 +17,8 @@ design; read it before writing code.
 
 `just cef` downloads CEF into the data directory (`CEF_PATH` overrides
 it), and `just bundle` builds the layout CEF needs: an app bundle with
-helper apps on macOS, a folder on Linux. katnav runs from that layout
-only.
+helper apps on macOS, a folder on Linux and Windows. katnav runs from
+that layout only.
 
 katui comes from crates.io. To work against a local katui checkout, add a
 `[patch.crates-io]` section to a `.cargo/config.toml` you keep untracked.

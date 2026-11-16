@@ -61,8 +61,8 @@ katnav running at the same time takes a temporary profile of its own.
 ## Layout
 
 CEF needs its files beside katnav: an app bundle with helper apps on
-macOS, the libraries and resources next to the binary on Linux.
-`just bundle` builds that layout. CEF's sandbox is off. On Linux katnav
+macOS, the libraries and resources next to the binary on Linux and
+Windows. `just bundle` builds that layout. CEF's sandbox is off. On Linux katnav
 runs Chromium on its headless platform, so it needs no X server or
 Wayland, and asks for WebGPU over Vulkan with `--enable-unsafe-webgpu` and
 `--enable-features=Vulkan`.

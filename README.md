@@ -13,9 +13,9 @@ get JavaScript, WebAssembly with threads, WebGL, WebGPU and sound.
 
 ## Install
 
-katnav runs on macOS and Linux, on x86_64 and arm64. Each install carries
-its own copy of CEF, about 300 MB. On Debian and Ubuntu, Chromium needs
-these libraries first:
+katnav runs on macOS and Linux, on x86_64 and arm64, and on Windows
+x86_64. Each install carries its own copy of CEF, about 300 MB. On
+Debian and Ubuntu, Chromium needs these libraries first:
 
 ```sh
 sudo apt install libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
@@ -33,6 +33,17 @@ brew install h4ks-com/tap/katnav
 </details>
 
 <details>
+<summary><b>Windows</b></summary>
+
+Download `katnav-x86_64-pc-windows-msvc.zip` from the
+[releases page](https://github.com/h4ks-com/katnav/releases), unzip it
+and run `katnav\katnav.exe` in
+[WezTerm nightly](https://wezterm.org/install/windows.html), which shows
+kitty graphics on Windows.
+
+</details>
+
+<details>
 <summary><b>Cargo</b></summary>
 
 You need Rust, CMake and Ninja, plus libudev on Linux.
@@ -42,15 +53,15 @@ cargo install --locked --git https://github.com/h4ks-com/katnav
 ```
 
 The build downloads CEF into `~/.local/share/katnav/cef`, and the first
-run sets katnav up beside it.
+run sets katnav up beside it. This works on macOS and Linux only.
 
 </details>
 
 <details>
 <summary><b>Build from source</b></summary>
 
-You need Rust, [just], CMake and Python 3, plus libudev on Linux. In a
-clone of this repository, run:
+You need Rust, [just], CMake and Python 3, plus libudev on Linux, and
+Ninja and Git Bash on Windows. In a clone of this repository, run:
 
 ```sh
 just run example.com
