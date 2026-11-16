@@ -8,8 +8,9 @@ the terminal's input back to the page.
 
 CEF calls `OnPaint` with each frame as a BGRA buffer while katnav pumps
 CEF's message loop from the katui event loop. katnav swaps it to RGBA and
-hands it to katui's `PixelScreen`, which sends only the tiles that changed,
-so a still page costs nothing. On a local kitty or Ghostty, frames travel
+hands it to katui's `PixelScreen` with the dirty rectangles CEF reports, so
+katui compares only those tiles and sends only the ones that changed. A
+still page costs nothing. On a local kitty or Ghostty, frames travel
 through temporary files.
 
 The device scale factor katnav reports to CEF sets the size of the paint
@@ -24,19 +25,24 @@ scales the picture up to fill its cells.
 
 | Terminal (katui `InputEvent`) | Page (CEF) |
 | --- | --- |
-| `Key` | a raw key down with the Windows and native key codes, then a char event for text |
+| `Key`, `KeyRepeat` | a raw key down with the Windows and native key codes, then a char event for text |
 | `KeyUp` | key up |
 | `Mouse` press, release | mouse click with the click count |
+| back and forward buttons | back and forward in the page's history |
 | `Mouse` move, drag | mouse move with the held buttons |
-| `Mouse` wheel | mouse wheel, 100 a notch |
+| `Mouse` wheel, up, down, left, right | mouse wheel, 100 a notch |
 | `Paste` | committed IME text |
 | `Focus(false)` | key up for every held key |
 
 Chromium derives `KeyboardEvent.code` from the native key code, so
 `src/keys.rs` maps each key to the macOS virtual key code and the X11 key
-code of a US keyboard. katnav asks for kitty key release reports. Until
-the terminal sends its first release, it releases every key right after
-its press, so no key sticks on terminals without release reports.
+code of a US keyboard. On another layout the terminal also sends the base
+layout key, and katnav takes the physical key from it. Super is the
+command modifier. On a terminal that does not report key releases, katnav
+releases every key right after its press, so no key sticks.
+
+When the page changes the pointer, katnav sets the terminal's pointer
+shape to match.
 
 ## Game controllers
 
@@ -56,9 +62,10 @@ katnav running at the same time takes a temporary profile of its own.
 
 CEF needs its files beside katnav: an app bundle with helper apps on
 macOS, the libraries and resources next to the binary on Linux.
-`just bundle` builds that layout. CEF's sandbox is off. On Linux,
-Chromium's WebGPU needs Vulkan, which katnav asks for with
-`--enable-unsafe-webgpu` and `--enable-features=Vulkan`.
+`just bundle` builds that layout. CEF's sandbox is off. On Linux katnav
+runs Chromium on its headless platform, so it needs no X server or
+Wayland, and asks for WebGPU over Vulkan with `--enable-unsafe-webgpu` and
+`--enable-features=Vulkan`.
 
 ## Tracing
 

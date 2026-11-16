@@ -13,8 +13,15 @@ get JavaScript, WebAssembly with threads, WebGL, WebGPU and sound.
 
 ## Install
 
-katnav runs on macOS and Linux, on x86_64 and arm64. It is tested on macOS.
-Each install carries its own copy of CEF, about 300 MB.
+katnav runs on macOS and Linux, on x86_64 and arm64. Each install carries
+its own copy of CEF, about 300 MB. On Debian and Ubuntu, Chromium needs
+these libraries first:
+
+```sh
+sudo apt install libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
+  libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
+  libcairo2 libasound2t64 libudev1
+```
 
 <details>
 <summary><b>Homebrew</b> (macOS and Linux)</summary>
