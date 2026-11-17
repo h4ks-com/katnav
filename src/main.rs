@@ -23,7 +23,8 @@ use crate::tab::{FRAMES_PER_SECOND, Tab};
 
 const USAGE: &str = "usage: katnav [--mute] [url or file]
 
-  --mute  play no sound
+  --mute     play no sound
+  --version  print the version and the commit it was built from
 
 ctrl-l type an address, alt-left go back, alt-right go forward,
 ctrl-r reload, ctrl-c or ctrl-q quit";
@@ -115,7 +116,23 @@ fn say(text: &str) {
     let _ = writeln!(std::io::stderr(), "{text}");
 }
 
+/// The release, and the commit it was built from when the build knew it.
+fn version() -> String {
+    let release = env!("CARGO_PKG_VERSION");
+    option_env!("KATNAV_COMMIT").map_or_else(
+        || format!("katnav {release}"),
+        |commit| format!("katnav {release} ({commit})"),
+    )
+}
+
 fn main() -> ExitCode {
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        let _ = writeln!(std::io::stdout(), "{}", version());
+        return ExitCode::SUCCESS;
+    }
     let helper = engine::is_helper();
     #[cfg(unix)]
     if !helper && let Err(error) = bundle::run_beside_cef() {
