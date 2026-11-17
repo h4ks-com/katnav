@@ -13,7 +13,7 @@ graphics protocol, which kitty, Ghostty and WezTerm speak.
 
 <!-- gameplay video -->
 
-![katnav showing the katui docs site in a terminal](assets/katnav.webp)
+![katnav showing a Wikipedia article in a terminal, with back, forward and reload buttons and the address bar on top](assets/katnav.webp)
 
 Chromium comes in through CEF, the Chromium Embedded Framework, so pages
 get JavaScript, WebAssembly with threads, WebGL, WebGPU and sound.
