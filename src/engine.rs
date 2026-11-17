@@ -17,7 +17,7 @@ use cef::args::Args;
 use cef::{
     App, Browser, BrowserSettings, CefString, CefStringUtf16, Client, CommandLine, CursorInfo,
     CursorType, DictionaryValue, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost,
-    ImplClient, ImplCommandLine, ImplDisplayHandler, ImplFrame, ImplLifeSpanHandler,
+    ImplClient, ImplCommandLine, ImplDisplayHandler, ImplDragData, ImplFrame, ImplLifeSpanHandler,
     ImplLoadHandler, ImplRenderHandler, KeyEvent, KeyEventType, LifeSpanHandler, LoadHandler,
     MouseButtonType, MouseEvent, PaintElementType, PopupFeatures, Range, Rect, RenderHandler,
     ScreenInfo, Settings, WindowInfo, WindowOpenDisposition, WrapApp, WrapClient,
@@ -612,6 +612,43 @@ impl Page {
         }
     }
 
+    /// Start dragging `files` over the page at `at`, as a file manager
+    /// does when a drag enters the window.
+    pub(crate) fn drag_enter(&self, at: (i32, i32), files: &[PathBuf]) {
+        let (Some(host), Some(mut data)) = (self.host(), cef::drag_data_create()) else {
+            return;
+        };
+        for file in files {
+            let name = file
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            data.add_file(
+                Some(&file.to_string_lossy().as_ref().into()),
+                Some(&name.as_str().into()),
+            );
+        }
+        host.drag_target_drag_enter(Some(&mut data), Some(&mouse(at, 0)), copy());
+    }
+
+    pub(crate) fn drag_over(&self, at: (i32, i32)) {
+        if let Some(host) = self.host() {
+            host.drag_target_drag_over(Some(&mouse(at, 0)), copy());
+        }
+    }
+
+    pub(crate) fn drop_at(&self, at: (i32, i32)) {
+        if let Some(host) = self.host() {
+            host.drag_target_drop(Some(&mouse(at, 0)));
+        }
+    }
+
+    pub(crate) fn drag_leave(&self) {
+        if let Some(host) = self.host() {
+            host.drag_target_drag_leave();
+        }
+    }
+
     /// Run `script` in the page's main frame.
     pub(crate) fn run_script(&self, script: &str) {
         if let Some(frame) = self.browser.main_frame() {
@@ -630,6 +667,11 @@ pub(crate) use katui::proto::input::Button;
 
 fn mouse((x, y): (i32, i32), modifiers: u32) -> MouseEvent {
     MouseEvent { x, y, modifiers }
+}
+
+/// A dropped file is copied into the page, never moved or linked.
+fn copy() -> cef::DragOperationsMask {
+    cef::sys::cef_drag_operations_mask_t::DRAG_OPERATION_COPY.into()
 }
 
 #[cfg(test)]

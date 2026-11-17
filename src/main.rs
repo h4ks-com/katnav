@@ -4,6 +4,7 @@
 mod bar;
 #[cfg(unix)]
 mod bundle;
+mod drop;
 mod engine;
 mod governor;
 mod keys;

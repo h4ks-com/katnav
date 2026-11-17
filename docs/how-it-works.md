@@ -47,6 +47,7 @@ argument does.
 | `Mouse` move, drag | mouse move with the held buttons |
 | `Mouse` wheel, up, down, left, right | mouse wheel, 100 a notch |
 | `Paste` | committed IME text |
+| `Paste` of nothing but existing file paths | a file drag that follows the pointer and drops on the next click |
 | `Focus(false)` | key up for every held key |
 
 Chromium derives `KeyboardEvent.code` from the native key code, so
@@ -55,6 +56,12 @@ code of a US keyboard. On another layout the terminal also sends the base
 layout key, and katnav takes the physical key from it. Super is the
 command modifier. On a terminal that does not report key releases, katnav
 releases every key right after its press, so no key sticks.
+
+A terminal turns a file dragged onto its window into a paste of the
+file's path, and reports no pointer while the drag lasts. So katnav reads
+a paste of existing paths as files the pointer now carries: the page sees
+them hover as the pointer moves, a left click drops them there, and Esc
+types the paths instead.
 
 When the page changes the pointer, katnav sets the terminal's pointer
 shape to match.

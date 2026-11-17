@@ -23,6 +23,7 @@ use katui::scene::surface::{PixelPos, PixelRect, Surface};
 
 use crate::Error;
 use crate::bar::{self, Bar, Outcome, Shortcut, Target};
+use crate::drop;
 use crate::engine::{self, Engine, KeyKind, Page, View};
 use crate::governor::Governor;
 use crate::keys;
@@ -41,6 +42,9 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
 const IS_REPEAT: u32 = 1 << 13;
 /// A CEF pump past this long gets a trace line.
+/// How often we repeat a carried drag's position, about as often as an
+/// operating system does during a drag.
+const DRAG_REPEAT: Duration = Duration::from_millis(50);
 const SLOW_PUMP: Duration = Duration::from_millis(8);
 
 /// What the pump thread sends the loop.
@@ -149,6 +153,10 @@ pub(crate) struct Tab {
     closing: Option<Instant>,
     pads: Vec<Pad>,
     latest_pads: Arc<Mutex<Option<Vec<Pad>>>>,
+    /// Where the pointer last was on the page, in CSS pixels.
+    last_at: (i32, i32),
+    /// The files the pointer carries until a click drops them on the page.
+    carried: Option<Carried>,
 }
 
 impl Tab {
@@ -194,6 +202,8 @@ impl Tab {
             closing: None,
             pads: Vec::new(),
             latest_pads: Arc::default(),
+            last_at: (0, 0),
+            carried: None,
         }
     }
 
@@ -263,6 +273,7 @@ impl Tab {
     fn pump(&mut self) -> Control {
         let started = Instant::now();
         self.engine.pump();
+        self.keep_dragging();
         if self.trace.on() && started.elapsed() > SLOW_PUMP {
             let took = trace::millis(started.elapsed());
             self.trace.line(format_args!("pump {took:.1} ms"));
@@ -356,11 +367,20 @@ impl Tab {
     fn mouse(&mut self, mouse: &MouseEvent) {
         let (x, y) = self.pointer.locate(mouse, self.cell);
         let bar_bottom = f32::from(bar::ROWS) * f32::from(self.cell.height);
-        if y < bar_bottom && self.held_buttons == 0 {
+        if y < bar_bottom && self.held_buttons == 0 && self.carried.is_none() {
             self.bar_mouse(mouse, x);
             return;
         }
         let at = page_point((x, y), self.cell, self.density);
+        self.last_at = at;
+        if self.carried.is_some() && self.carried_mouse(mouse.action, at, y < bar_bottom) {
+            return;
+        }
+        if let MouseAction::Release(button) = mouse.action
+            && self.held_buttons & button_flag(button) == 0
+        {
+            return;
+        }
         if let MouseAction::Press(button) = mouse.action {
             self.held_buttons |= button_flag(button);
             self.bar.blur();
@@ -373,18 +393,87 @@ impl Tab {
         if let MouseAction::Release(button) = mouse.action {
             self.held_buttons &= !button_flag(button);
         }
-        let Some(page) = &self.page else { return };
-        match mouse.action {
-            MouseAction::Press(Button::Back) => page.back(),
-            MouseAction::Press(Button::Forward) => page.forward(),
-            MouseAction::Press(button) => page.click(at, flags, button, false, count),
-            MouseAction::Release(button) => page.click(at, flags, button, true, count),
-            MouseAction::Drag(_) | MouseAction::Move => page.hover(at, flags),
-            MouseAction::WheelUp => page.wheel(at, flags, (0, WHEEL_STEP)),
-            MouseAction::WheelDown => page.wheel(at, flags, (0, -WHEEL_STEP)),
-            MouseAction::WheelLeft => page.wheel(at, flags, (WHEEL_STEP, 0)),
-            MouseAction::WheelRight => page.wheel(at, flags, (-WHEEL_STEP, 0)),
+        if let Some(page) = &self.page {
+            send_mouse(page, mouse.action, at, flags, count);
         }
+    }
+
+    /// The pointer while it carries files: the page sees them hover, a left
+    /// click on the page drops them, any other click lets them go.
+    fn carried_mouse(&mut self, action: MouseAction, at: (i32, i32), on_bar: bool) -> bool {
+        let Some(page) = &self.page else {
+            return false;
+        };
+        match action {
+            MouseAction::Move | MouseAction::Drag(_) if !on_bar => page.drag_over(at),
+            MouseAction::Press(Button::Left) if !on_bar => {
+                page.drag_over(at);
+                if let Some(carried) = &mut self.carried {
+                    carried.dropping = true;
+                }
+            }
+            MouseAction::Press(_) => {
+                page.drag_leave();
+                self.put_down();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Pick up the files a paste names, when it names only files, so the
+    /// next click drops them where the pointer is.
+    fn pick_up(&mut self, text: &str) -> bool {
+        let (Some(page), Some(files)) = (&self.page, drop::dropped_files(text)) else {
+            return false;
+        };
+        page.drag_enter(self.last_at, &files);
+        let what = match files.as_slice() {
+            [file] => file.file_name().map_or_else(
+                || "the file".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            many => format!("{} files", many.len()),
+        };
+        self.bar.notice = Some(format!("click to drop {what} · esc to paste the path"));
+        self.carried = Some(Carried {
+            text: text.to_owned(),
+            repeated_at: Instant::now(),
+            dropping: false,
+        });
+        true
+    }
+
+    /// Repeat the carried drag's position, since Chromium fires `dragover`
+    /// only on a repeat, and drop one repeat after the click, once the page
+    /// had its say on the click's position.
+    fn keep_dragging(&mut self) {
+        let (Some(page), Some(carried)) = (&self.page, &mut self.carried) else {
+            return;
+        };
+        if carried.repeated_at.elapsed() < DRAG_REPEAT {
+            return;
+        }
+        carried.repeated_at = Instant::now();
+        page.drag_over(self.last_at);
+        if carried.dropping {
+            page.drop_at(self.last_at);
+            self.put_down();
+        }
+    }
+
+    fn put_down(&mut self) {
+        self.carried = None;
+        self.bar.notice = None;
+    }
+
+    /// Let the carried files go and type their paths instead.
+    fn paste_carried(&mut self) {
+        if let (Some(page), Some(carried)) = (&self.page, self.carried.take()) {
+            page.drag_leave();
+            page.insert(&carried.text);
+        }
+        self.put_down();
     }
 
     /// A key going down. Until the terminal has shown it reports releases
@@ -474,6 +563,8 @@ impl Tab {
                 self.type_in_bar(event);
             }
             InputEvent::KeyUp(..) | InputEvent::BaseLayoutKey(_) if self.bar.focused() => {}
+            InputEvent::Key(Key::Escape, _) if self.carried.is_some() => self.paste_carried(),
+            InputEvent::Paste(text) if self.pick_up(text) => {}
             InputEvent::Key(key, mods) if let Some(shortcut) = bar::shortcut(*key, *mods) => {
                 self.shortcut(shortcut);
             }
@@ -517,6 +608,32 @@ impl Tab {
             InputEvent::Focus(false) => self.release_keys(),
             _ => {}
         }
+    }
+}
+
+/// Files dragged onto the terminal, which the pointer carries over the page.
+#[derive(Debug)]
+struct Carried {
+    /// The paste that named them, to type instead when they are let go.
+    text: String,
+    /// When we last told the page where the drag is.
+    repeated_at: Instant,
+    /// Whether a click asked to drop them on the next repeat.
+    dropping: bool,
+}
+
+/// Hand one mouse action to the page at `at` in CSS pixels.
+fn send_mouse(page: &Page, action: MouseAction, at: (i32, i32), flags: u32, count: i32) {
+    match action {
+        MouseAction::Press(Button::Back) => page.back(),
+        MouseAction::Press(Button::Forward) => page.forward(),
+        MouseAction::Press(button) => page.click(at, flags, button, false, count),
+        MouseAction::Release(button) => page.click(at, flags, button, true, count),
+        MouseAction::Drag(_) | MouseAction::Move => page.hover(at, flags),
+        MouseAction::WheelUp => page.wheel(at, flags, (0, WHEEL_STEP)),
+        MouseAction::WheelDown => page.wheel(at, flags, (0, -WHEEL_STEP)),
+        MouseAction::WheelLeft => page.wheel(at, flags, (WHEEL_STEP, 0)),
+        MouseAction::WheelRight => page.wheel(at, flags, (-WHEEL_STEP, 0)),
     }
 }
 

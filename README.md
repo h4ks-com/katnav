@@ -105,6 +105,10 @@ Scroll with the mouse wheel, click and type as in any browser. The top
 row holds back, forward and reload buttons and the address bar. Type a
 URL or host there to open it, or anything else to search DuckDuckGo.
 
+To upload a file, drag it from your file manager onto katnav, then click
+where it goes on the page. Press <kbd>Esc</kbd> instead to paste its path
+as text.
+
 | Key | Action |
 | --- | --- |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | type an address or search |

@@ -148,6 +148,8 @@ pub(crate) enum Outcome {
 pub(crate) struct Bar {
     pub(crate) url: String,
     pub(crate) state: Loading,
+    /// A line shown in place of the address while it is set.
+    pub(crate) notice: Option<String>,
     field: Field,
     focused: bool,
     /// Whether the field holds the whole address as a selection, which
@@ -262,7 +264,13 @@ impl Bar {
         let text_at = Position { x: start + 1, y: 0 };
         let room = usize::from(width.saturating_sub(2));
         if !self.focused {
-            let shown: String = self.url.chars().take(room).collect();
+            let shown: String = self
+                .notice
+                .as_ref()
+                .unwrap_or(&self.url)
+                .chars()
+                .take(room)
+                .collect();
             row.set_string(text_at, &shown, TEXT, FIELD, Attrs::EMPTY);
             return;
         }
