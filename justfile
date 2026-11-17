@@ -24,12 +24,14 @@ cef:
     MINGW*-x86_64 | MSYS*-x86_64) platform=windows64 python=python ;;
     *) echo "no CEF build for $(uname -sm)" >&2; exit 1 ;;
     esac
+    # we retry downloads, since one failed DNS lookup on a CI runner would
+    # otherwise fail a whole release
     # the CEF index outgrew export-cef-dir's download limit, so we fetch
     # the archive ourselves and hand it over
     chromium=$(sed -n 's/^version = "{{cef_version}}+\(.*\)"/\1/p' Cargo.lock | head -n 1)
     work=$(mktemp -d)
     trap 'rm -rf "$work"' EXIT
-    curl -fsSL https://cef-builds.spotifycdn.com/index.json -o "$work/index.json"
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 https://cef-builds.spotifycdn.com/index.json -o "$work/index.json"
     read -r name sha1 < <("$python" - "$work/index.json" "$platform" "$chromium" <<'EOF'
     import json, sys
     index, platform, chromium = sys.argv[1:]
@@ -42,7 +44,7 @@ cef:
     )
     # python on windows ends its lines with a carriage return
     sha1=${sha1%$'\r'}
-    curl -fSL "https://cef-builds.spotifycdn.com/$name" -o "$work/$name"
+    curl -fSL --retry 5 --retry-all-errors --retry-delay 5 "https://cef-builds.spotifycdn.com/$name" -o "$work/$name"
     # git bash on windows has sha1sum and no shasum, older macs the reverse
     if command -v sha1sum >/dev/null; then check=sha1sum; else check=shasum; fi
     echo "$sha1  $work/$name" | "$check" -c -
