@@ -2,7 +2,7 @@
 name = "katnav"
 description = "A web browser in your terminal: Chromium's pixels over the kitty graphics protocol"
 repository = "https://github.com/h4ks-com/katnav"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
