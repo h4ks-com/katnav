@@ -6,7 +6,6 @@ mod bar;
 mod bundle;
 mod drop;
 mod engine;
-mod governor;
 mod keys;
 mod pads;
 mod tab;

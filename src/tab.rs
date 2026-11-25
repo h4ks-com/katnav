@@ -25,10 +25,10 @@ use crate::Error;
 use crate::bar::{self, Bar, Outcome, Shortcut, Target};
 use crate::drop;
 use crate::engine::{self, Engine, KeyKind, Page, View};
-use crate::governor::Governor;
 use crate::keys;
 use crate::pads;
 use crate::trace::{self, Trace};
+use katui::rt::video::ScaleGovernor;
 
 const BASE_IMAGE: u32 = 900;
 const TILE_BUDGET: usize = 320;
@@ -147,7 +147,7 @@ pub(crate) struct Tab {
     /// Where the frames CEF painted since the last draw changed.
     damage: Vec<PixelRect>,
     pointer_shape: Option<PointerShape>,
-    governor: Governor,
+    governor: ScaleGovernor,
     pump_pending: Arc<AtomicBool>,
     title_shown: bool,
     closing: Option<Instant>,
@@ -196,7 +196,7 @@ impl Tab {
             base_key: None,
             damage: Vec::new(),
             pointer_shape: None,
-            governor: Governor::new(Duration::from_secs(1) / FRAMES_PER_SECOND, min, max),
+            governor: ScaleGovernor::new(Duration::from_secs(1) / FRAMES_PER_SECOND, min, max),
             pump_pending: Arc::new(AtomicBool::new(false)),
             title_shown: false,
             closing: None,
