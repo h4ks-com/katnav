@@ -805,9 +805,9 @@ dependencies = [
 
 [[package]]
 name = "katui"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5822e9ff6003547a2c9f45bd8bb18ba6959bd07d88310ff83a61f958ac43e091"
+checksum = "6d1e0365330d4f4c8a6c2becdd35070247d3ecb8d8834ea37b92ec42f53bb9fd"
 dependencies = [
  "katui-game",
  "katui-present",
@@ -818,9 +818,9 @@ dependencies = [
 
 [[package]]
 name = "katui-draw"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8baee44cc960301d61451a69a197f549d978567cb2f5f7d6160f27e6e163445"
+checksum = "0e6d379c2c954611d4e8439eae1e97129dae01fb061ffefbadcdd681fc71368a"
 dependencies = [
  "cosmic-text",
  "katui-scene",
@@ -830,9 +830,9 @@ dependencies = [
 
 [[package]]
 name = "katui-game"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad210e9f4af792a54da467d557d2eb428b7563ff77f93e09c78448a050e37fa"
+checksum = "bc58b67686a3871087c01f92be2cf39ca1af54ff26e4e3f5d1bc7ecc9ff96353"
 dependencies = [
  "katui-draw",
  "katui-present",
@@ -843,9 +843,9 @@ dependencies = [
 
 [[package]]
 name = "katui-present"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6799a9c608f9390a0abeb2cd2e75722a7375124162bed853dc70fbe6c8492db0"
+checksum = "6a5a5354f116c21ac29cd5ec2b7781fecaae91a9c2dd3c5fd1785c462749492b"
 dependencies = [
  "katui-proto",
  "katui-scene",
@@ -853,9 +853,9 @@ dependencies = [
 
 [[package]]
 name = "katui-proto"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfe50c1791aba018bfd05bf5de9672a099d67732e7ad1dd6a030ddf275ca9de2"
+checksum = "1106126507d201a1b53439308555647ddddb7824fce90a0e438eebadb940f91b"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -864,9 +864,9 @@ dependencies = [
 
 [[package]]
 name = "katui-rt"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a477c1fad0bbe198dbaecbe6ecbaf3403a67436230253121a116ad3fb9af05df"
+checksum = "20a04476562dedfad3351282128f0cc5f1d5cc2680c12a20995f77d28dcc3184"
 dependencies = [
  "crossterm_winapi",
  "gilrs",
@@ -881,9 +881,9 @@ dependencies = [
 
 [[package]]
 name = "katui-scene"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eac902db154c13f713c1818229695b6b797e13f0322735fad457d0a445c04068"
+checksum = "30f235b7592b971cc27e69eb48e841125fed1f1d5d749792f981351c42e76ebe"
 dependencies = [
  "unicode-segmentation",
  "unicode-width",
